@@ -1,6 +1,6 @@
 
 /*
-g++ -O2 -std=c++20 -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -fsanitize=float-divide-by-zero -fsanitize=float-cast-overflow -fno-sanitize=null -fno-sanitize=alignment snake.cpp && ./a.out
+g++ -O2 -std=c++20 snake.cpp && ./a.out
 
 -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -fsanitize=float-divide-by-zero -fsanitize=float-cast-overflow -fno-sanitize=null -fno-sanitize=alignment
 */
@@ -275,6 +275,7 @@ public:
 
 const int AP_TYPE = 0;
 const int BCC_TYPE = 1;
+const int CC_TYPE = 2;
 
 struct Component{
     int type;
@@ -346,15 +347,18 @@ public:
         isAP.assign(area, false);
         tarjan_timer = 0;
 
-        for(const Pos& neigh : env.emptyNeighs(env.head)){
-            if(visitTime[ID(neigh)] == -1){
-                assert(edgeQueue.size() == 0);
-                tarjan(ID(neigh));
-            }
-        }
+        // for(const Pos& neigh : env.emptyNeighs(env.head)){
+        //     if(visitTime[ID(neigh)] == -1){
+        //         assert(edgeQueue.size() == 0);
+        //         tarjan(ID(neigh));
+        //     }
+        // }
+        tarjan(ID(env.head));
 
         cellComps.assign(area, -1);
         getGraph();
+
+        getRemainingComps();
     }
 
     vector<int> visitTime;
@@ -365,6 +369,37 @@ public:
     
     vector<Edge> edgeQueue;
     vector<unordered_set<int>> BCCs;
+
+    unordered_map<Component, unordered_set<Component, ComponentHash>, ComponentHash> compGraph;
+    vector<int> cellComps;
+
+    vector<unordered_set<int>> connectedComps;
+
+    void dfs(int node, unordered_set<int>& lst){
+        lst.insert(node);
+        for(Pos neigh : env.emptyNeighs(fromID(node))){
+            if(visitTime[ID(neigh)] == -1){
+                visitTime[ID(neigh)] = INF;
+                dfs(ID(neigh), lst);
+            }
+        }
+    }
+
+    void getRemainingComps(){
+        int counter = BCCs.size();
+        for(int i=0; i<area; i++){
+            if(visitTime[i] == -1){
+                unordered_set<int> comp;
+                visitTime[i] = INF;
+                dfs(i, comp);
+                connectedComps.push_back(comp);
+                for(const int& x : comp){
+                    cellComps[x] = counter;
+                }
+                counter ++;
+            }
+        }
+    }
 
     void flushQueue(int queueIndex){
         unordered_set<int> bcc;
@@ -377,7 +412,6 @@ public:
     }
 
     void tarjan(int node, int parent=-1){
-        // cout << "Calling " << env.PosToCode(fromID(node)) << '\n';
         visitTime[node] = minConnTime[node] = tarjan_timer ++;
         int n_children = 0;
         for(Pos neigh : env.emptyNeighs(fromID(node))){
@@ -398,11 +432,11 @@ public:
                 }
                 minConnTime[node] = min(minConnTime[node], minConnTime[ID(neigh)]);
             }
-            else if(visitTime[ID(neigh)] < visitTime[node]){ // only process back-edges, not forward
+            else if(visitTime[ID(neigh)] < visitTime[node]){
                 minConnTime[node] = min(minConnTime[node], visitTime[ID(neigh)]);
             }
             else{
-                edgeQueue.pop_back(); // forward cross-edge, don't keep it
+                edgeQueue.pop_back();
             }
         }
         if(parent == -1 && n_children > 1){
@@ -412,9 +446,6 @@ public:
             BCCs.push_back(unordered_set<int>{node});
         }
     }
-
-    unordered_map<Component, unordered_set<Component, ComponentHash>, ComponentHash> compGraph;
-    vector<int> cellComps;
 
     void getGraph(){
         for(int c=0; c<BCCs.size(); c++){
@@ -480,6 +511,8 @@ public:
 
     Perform dynamic BFS with tail retraction, filling rawMinTimes with min time can be at square without considering survival. As tail retracts, neighboring cells whose maxTimes > t are "freed" and minTimes of cells on the path of BCCs from it to the head are locked in to minTimes. cells whose maxTimes are <= t are added back to the BFS queue and considered unvisited.
 
+    As an extension, we can also "free" cells outside the head component: free other connected components whenever the tail is neighboring it.
+
 
     Border-following heuristic
 
@@ -500,7 +533,6 @@ public:
             for(const int& x : decomp.BCCs[comp.id]){
                 parityCounts[manhattanDist(fromID(x), fromID(start)) % 2] ++;
             }
-            // cout << parityCounts[0] << ' ' << parityCounts[1] << '\n';
             for(const int& x : decomp.BCCs[comp.id]){
                 if(x == start) continue;
                 int parity = manhattanDist(fromID(x), fromID(start)) % 2;
@@ -542,10 +574,15 @@ public:
         if(decomp.isAP[cell]){
             return Component{AP_TYPE, cell};
         }
-        return Component{BCC_TYPE, decomp.cellComps[cell]};
+        else if(decomp.cellComps[cell] < decomp.BCCs.size()){
+            return Component{BCC_TYPE, decomp.cellComps[cell]};
+        }
+        return Component{CC_TYPE, decomp.cellComps[cell] - (int) decomp.BCCs.size()};
     }
 
-    void getMinTimes(const Snake& env, int start, int safety){
+    vector<int> freeTimes; // minimum time at which you can be at a cell and escape
+
+    bool getMinTimes(const Snake& env, int start, int safety, bool print=false){
         // cout << "Calling...\n";
 
         // Get max times
@@ -568,10 +605,6 @@ public:
         maxTimes[start] = 0;
         getMaxTimes(initComp, start);
 
-        // displayArray(env, maxTimes);
-
-        // displayArray(env, decomp.cellComps);
-        // cout << decomp.toString() << '\n';
 
         
 
@@ -606,14 +639,14 @@ public:
 
         minTimes.assign(area, INF);
         vector<int> rawMinTimes = vector<int>(area, INF);
-        vector<bool> freed = vector<bool>(area, false);
-        vector<bool> reenterable = vector<bool>(area, true);
-        for(int i=0; i<area; i++){
-            if(maxTimes[i] != -1) reenterable[i] = false;
-        }
+        freeTimes.assign(area, INF);
+        // vector<bool> reenterable = vector<bool>(area, true);
+        // for(int i=0; i<area; i++){
+        //     if(maxTimes[i] != -1) reenterable[i] = false;
+        // }
 
         unordered_set<Component, ComponentHash> freedComponents;
-        unordered_set<Component, ComponentHash> reenterableComponents;
+        // unordered_set<Component, ComponentHash> reenterableComponents;
 
         for(int t=0; t<area; t++){
             // if(queue.find(env.apple) != queue.end()){
@@ -626,8 +659,72 @@ public:
             //     }
             //     cout << '\n';
             // }
-            
             unordered_set<Pos, PosHash> next_queue;
+
+            if(t >= safety){
+                // cout << env.PosToCode(curr_tail) << '\n';
+                for(const Pos& p : validNeighs(curr_tail)){
+                    // if(!retractibleBody[ID(p)] && visited[ID(p)]){
+                    if(!retractibleBody[ID(p)] && visited[ID(p)] && maxTimes[ID(p)] > t){
+                        // cout << "Step " << t << " Inserting " + env.PosToCode(p) << '\n';
+                        next_queue.insert(p);
+                    }
+
+                    if(maxTimes[ID(p)] > t){
+                        canEscape = true;
+                    }
+                    // Free path of components to head
+                    
+                    Component comp = compOfCell(ID(p), decomp);
+                    if(comp.type == CC_TYPE && freeTimes[ID(p)] == INF){
+                        for(const int& x : decomp.connectedComps[comp.id]){
+                            freeTimes[x] = t - safety;
+                        }
+                    }
+
+                    if(maxTimes[ID(p)] != -1){
+                        // Component currComp = compOfCell(ID(p), decomp);
+                        // while(true){
+                        //     if(reenterableComponents.contains(currComp)) break;
+                        //     reenterableComponents.insert(currComp);
+                        //     if(currComp.type == BCC_TYPE){
+                        //         cout << "Step " << t << " Pos: " << env.PosToCode(p) << " Setting reenterable: " << compToString(currComp) << " size: " << decomp.BCCs[currComp.id].size() << '\n';
+                        //         for(const int& x : decomp.BCCs[currComp.id]){
+                        //             reenterable[x] = true;
+                        //         }
+                        //     }
+                        //     if(!parent.contains(currComp)) break;
+                        //     currComp = parent[currComp];
+                        // }
+                        Component currComp = compOfCell(ID(p), decomp);
+                        while(true){
+                            if(freedComponents.contains(currComp)){
+                                break;
+                            }
+                            freedComponents.insert(currComp);
+                            if(currComp.type == BCC_TYPE){
+                                // cout << "Step " << t << " Pos: " << env.PosToCode(p) << " Setting free: " << compToString(currComp) << " size: " << decomp.BCCs[currComp.id].size() << '\n';
+                                for(const int& x : decomp.BCCs[currComp.id]){
+                                    freeTimes[x] = min(freeTimes[x], max(0, (t - safety) - max(0, maxTimes[ID(p)] - maxTimes[x])));
+                                }
+                            }
+                            if(!parent.contains(currComp)) break;
+                            currComp = parent[currComp];
+                        }
+                    }
+
+                    
+                    // if(maxTimes[ID(p)] > t){
+                    //     // cout << "Step " << t << " Freed " + env.PosToCode(p) << '\n';
+                    //     // canEscape = true;
+                    // }
+                }
+                retractibleBody[ID(curr_tail)] = false;
+                if(curr_tail != env.head){
+                    curr_tail = shiftPos(curr_tail, env.body[ID(curr_tail)]);
+                }
+            }
+            
             for(const Pos& p : queue){
                 if(maxTimes[ID(p)] == -1){
                     minTimes[ID(p)] = min(minTimes[ID(p)], t);
@@ -645,7 +742,7 @@ public:
                             visited[ID(q)] = true;
                             next_queue.insert(q);
                         }
-                        if(!retractibleBody[ID(q)] && reenterable[ID(q)] && minTimes[ID(q)] == INF){
+                        if(!retractibleBody[ID(q)] && freeTimes[ID(q)] != INF && minTimes[ID(q)] == INF){
                             minTimes[ID(q)] = min(minTimes[ID(q)], t+1);
                             next_queue.insert(q);
                         }
@@ -655,82 +752,37 @@ public:
                     next_queue.insert(p);
                 }
             }
-            if(t >= safety && curr_tail != env.head){
-                for(const Pos& p : validNeighs(curr_tail)){
-                    if(!retractibleBody[ID(p)] && visited[ID(p)] && maxTimes[ID(p)] > t){
-                        // cout << "Step " << t << " Inserting " + env.PosToCode(p) << '\n';
-                        next_queue.insert(p);
-                    }
-
-                    if(maxTimes[ID(p)] > t){
-                        canEscape = true;
-                    }
-                    // Free path of components to head
-
-                    if(maxTimes[ID(p)] != -1){
-                        Component currComp = compOfCell(ID(p), decomp);
-                        while(true){
-                            if(reenterableComponents.contains(currComp)) break;
-                            reenterableComponents.insert(currComp);
-                            if(currComp.type == BCC_TYPE){
-                                // cout << "Setting reenterable: " << compToString(currComp) << " size: " << decomp.BCCs[currComp.id].size() << '\n';
-                                for(const int& x : decomp.BCCs[currComp.id]){
-                                    reenterable[x] = true;
-                                }
-                            }
-                            if(!parent.contains(currComp)) break;
-                            currComp = parent[currComp];
-                        }
-                        currComp = compOfCell(ID(p), decomp);
-                        if(maxTimes[ID(p)] > t-safety){
-                            while(true){
-                                if(freedComponents.contains(currComp)){
-                                    break;
-                                }
-                                freedComponents.insert(currComp);
-                                if(currComp.type == BCC_TYPE){
-                                    // cout << "Setting free: " << compToString(currComp) << " size: " << decomp.BCCs[currComp.id].size() << '\n';
-                                    for(const int& x : decomp.BCCs[currComp.id]){
-                                        freed[x] = true;
-                                    }
-                                }
-                                if(!parent.contains(currComp)) break;
-                                currComp = parent[currComp];
-                            }
-                        }
-                    }
-
-                    
-                    // if(maxTimes[ID(p)] > t){
-                    //     // cout << "Step " << t << " Freed " + env.PosToCode(p) << '\n';
-                    //     // canEscape = true;
-                    // }
-                }
-                retractibleBody[ID(curr_tail)] = false;
-                curr_tail = shiftPos(curr_tail, env.body[ID(curr_tail)]);
-                // if(curr_tail != env.head){
-                // }
-            }
+            
             
             queue = next_queue;
         }
 
-        // displayArray(env, rawMinTimes);
-        // displayArray(env, vector<int>(freed.begin(), freed.end()));
+        if(print){
+            cout << "\nRaw min times:\n";
+            displayArray(env, rawMinTimes);
+            cout << "\nFree Times:\n";
+            displayArray(env, freeTimes);
+            cout << "\nMax Times:\n";
+            displayArray(env, maxTimes);
+            cout << "\nCell comps:\n";
+            displayArray(env, decomp.cellComps);
+            cout << decomp.toString() << '\n';
+        }
+        
 
         for(int i=0; i<area; i++){
-            if(maxTimes[i] != -1 && freed[i]){
-                minTimes[i] = min(minTimes[i], rawMinTimes[i]);
+            if(maxTimes[i] != -1){
+                minTimes[i] = min(minTimes[i], max(rawMinTimes[i], freeTimes[i]));
             }
         }
 
-        // return canEscape;
+        return canEscape;
 
-        if(!canEscape){
-            for(int i=0; i<area; i++){
-                minTimes[i] = INF;
-            }
-        }
+        // if(!canEscape){
+        //     for(int i=0; i<area; i++){
+        //         minTimes[i] = INF;
+        //     }
+        // }
 
         // return shortestDist;
 
@@ -741,14 +793,14 @@ public:
     double distanceHeuristic(const Snake& env, int safety){
         if(env.validMoves().size() == 0) return INF;
 
-        getMinTimes(env, ID(env.head), safety);
+        bool canEscape = getMinTimes(env, ID(env.head), safety, false);
+        if(!canEscape) return INF;
 
-        // displayArray(env, minTimes);
         int immediate_dist = minTimes[ID(env.apple)];
-
-        return immediate_dist;
-
         // cout << "Immediate dist: " << immediate_dist << '\n';
+
+        // return immediate_dist;
+
 
         // Snake env_ = env;
 
@@ -761,46 +813,54 @@ public:
 
         // env_.body[ID(env.apple)] = -1;
 
+        // env_.display();
+
         // getMinTimes(env_, ID(env.apple), 0);
 
-        // // displayArray(env_, minTimes);
+        // displayArray(env_, minTimes);
 
-        // int sumDists = 0;
-        // int count = 0;
-        // for(int i=0; i<area; i++){
-        //     if(env_.body[i] == -1){
-        //         sumDists += minTimes[i];
-        //         count ++;
-        //     }
-        // }
 
-        // return immediate_dist + (double) sumDists / count;
 
+
+        const double diffusiveTime = 12; // approximate for how long it takes to reach each apple.
+
+        double sumWeights = 0;
+        double sumTotal = 0;
+
+        for(int i=0; i<area; i++){
+            if(env.body[i] == -1){
+                double weight = 1;
+                // double weight = minTimes[i] + diffusiveTime;
+                sumWeights += weight;
+                sumTotal += max(0., freeTimes[i] - (diffusiveTime + immediate_dist)) * weight;
+            }
+        }
+
+        return immediate_dist + (double) sumTotal / sumWeights;
     }
 
-    vector<int> shortestPath(const Snake& env){
+    vector<int> shortestPath(const Snake& env, bool printMode=false){
         int maxTime = area;
 
         vector<int> moves;
         Snake curr_env = env;
 
         for(int i=0; i<maxTime; i++){
-            // cout << curr_env.toCode() << '\n';
-            // curr_env.display();
-            // cout << "Step " << i << '\n';
-            // TarjanDecomposition tj_decomp(curr_env);
-            // cout << tj_decomp.toString() << '\n';
+            if(printMode){
+                cout << curr_env.toCode() << '\n';
+                curr_env.display();
+            }
 
             double minDist = INF;
             int bestAction = -1;
             // cout << "Finding dists...\n";
-            for(int safety=2; safety>=0; safety--){
+            for(int safety=3; safety>=0; safety--){
                 for(int d : curr_env.validMoves()){
                     Snake newEnv = curr_env;
                     newEnv.move(d);
-                    // cout << "Checking action " << d << '\n';
                     double dist = distanceHeuristic(newEnv, safety);
-                    // cout << "Action " << d << " dist: " << dist << '\n';
+                    if(printMode)
+                        cout << "Action " << d << " dist: " << dist << '\n';
                     if(minDist > dist){
                         minDist = dist;
                         bestAction = d;
@@ -854,27 +914,30 @@ public:
                 cout << tj_decomp.toString();
                 cout << env.toCode() << '\n';
                 env.display(path, headLoc);
+                getMinTimes(env, ID(env.head), 0, false);
+                cout << "minTimes:\n";
+                displayArray(env, minTimes);
             }
-            
-            env = newEnv;
-            lastState = env;
-            if(env.getSize() == area) return COMPLETE;
-            if(env.validMoves().size() == 0 || path.size() == 0) return TRAPPED;
 
+            env = newEnv;
             if(env.head == env.apple){
-                env.randomizeApple();
                 num_repeats = 0;
                 appleTimes.push_back(env.timer);
+                if(env.getSize() == area) return COMPLETE;
+                env.randomizeApple();
             }
             else{
                 num_repeats++;
             }
+            
+            if(env.validMoves().size() == 0 || path.size() == 0) return TRAPPED;
+            if(s.size() > 0) return USR_TERM;
+            if(num_repeats >= 2) return LOOPED;
+
+            lastState = env;
 
             if(stepMode)
                 getline(cin, s);
-            
-            if(s.size() > 0) return USR_TERM;
-            if(num_repeats >= 2) return LOOPED;
         }
         return TRAPPED;
     }
@@ -912,19 +975,22 @@ public:
 int main(){
     // srand(4392);
     // srand(6937);
-    srand(4497);
+    srand(10759);
 
     Solver s;
 
     // Snake env;
 
-    // Snake env("7x8_7x6_5x0_1251_aaaahggghwxspcwggunwxsalwboporjhugwunxpcugggwxssss");
-    // env.move(1);
+    // Snake env("6x8_9x8_6x9_302_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabgggaesssagggjaxsssp");
+    // env.move(0);
+    // env.move(0);
+    // env.move(0);
+    // env.move(3);
 
     // Snake env("19x22_1x7_10x21_2549_aaaaaaaaaaghaaaaaacaaaaaaxraaaaaacaaaaaaawaaaaaacaaaaaaawaaaaaacaaaaaaawaaaaaacaaaaaaawaaaaaacaaaaaaawaaaaaacaaaggggwaaaaaacaaauaaacaaaaaacaaauaaacaaaaaacaaauaaacaaaaaacaaauaaacaaaaaacaaauaaacaaaaaacaaauaaacaaaaaacaaaxsssraaaaaabgggggggwaaaaaaaaaaaaaacaaaaaaaaaagghacaaaaaaaaaauacacaaaaaaaaaauabgcaaaaaaaaaauaaacaaaaaaaaaauaaacaaaaaaaaaaxssssaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     // env.move(0);
 
-    // cout << s.simulate(env, true) << "\n";
+    // cout << s.simulate(env, true, true) << "\n";
 
 
     // env.display();
@@ -934,6 +1000,10 @@ int main(){
     // TarjanDecomposition tj_decomp(env);
     // cout << tj_decomp.toString() << '\n';
 
+
+    // s.getMinTimes(env, ID(env.head), 0, true);
+    // cout << "Min times:\n";
+    // s.displayArray(env, s.minTimes);
     // cout << s.distanceHeuristic(env, 0) << '\n';
 
     // s.displayArray(env, s.maxTimes);
