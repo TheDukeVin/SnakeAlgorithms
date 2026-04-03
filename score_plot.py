@@ -24,3 +24,13 @@ plt.xlabel('Time')
 plt.ylabel('Size')
 
 plt.savefig('size_over_time')
+
+times = []
+for i in range(max(endpoint_y)):
+    times.append(np.array([arrs[x][i+1] - arrs[x][i] for x in range(len(arrs)) if len(arrs[x]) > i+1]).mean())
+
+cum_times = np.array(times).cumsum()
+
+plt.figure()
+plt.plot((cum_times[5:] - cum_times[:-5])/5)
+plt.savefig('avg_times')
