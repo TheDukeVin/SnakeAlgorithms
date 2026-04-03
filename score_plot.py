@@ -32,5 +32,10 @@ for i in range(max(endpoint_y)):
 cum_times = np.array(times).cumsum()
 
 plt.figure()
-plt.plot((cum_times[5:] - cum_times[:-5])/5)
+window_size = 5
+cutoff = 700
+
+rolling_avg = (cum_times[window_size:] - cum_times[:-window_size])/window_size
+plt.plot(rolling_avg)
+plt.vlines([cutoff, cutoff], 0, max(rolling_avg), colors='red')
 plt.savefig('avg_times')
