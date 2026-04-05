@@ -35,7 +35,12 @@ plt.figure()
 window_size = 5
 cutoff = 700
 
+area = 900
+hamRateLen = 200
+
+
 rolling_avg = (cum_times[window_size:] - cum_times[:-window_size])/window_size
 plt.plot(rolling_avg)
 plt.vlines([cutoff, cutoff], 0, max(rolling_avg), colors='red')
+plt.plot([area-hamRateLen, area], [hamRateLen/2, 0], color='green')
 plt.savefig('avg_times')

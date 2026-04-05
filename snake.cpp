@@ -34,19 +34,14 @@ const int area = boardSize * boardSize;
 const int EMPTY = -1;
 const int INF = 1 << 20;
 
-// const double diffusiveTime = 50; // approximate for how long it takes to reach each apple.
-// const double hamConstant = 0.1; // how strongly endgame algorithm follows ham cycle
-// const int endGameCutoff = 700;
-// const double decayRate = 0.01;
-
 const double diffusiveTime = 50; // approximate for how long it takes to reach each apple.
-const double hamConstant = 0.1; // how strongly endgame algorithm follows ham cycle
-const int endGameCutoff = 700;
-const double decayRate = 0.02;
+const double hamBonus = 100; // how strongly endgame algorithm follows ham cycle
+const int endGameCutoff = 800;
+const double decayRate = 1;
 const double borderBonus = 10;
 
 const int maxSafety = 6;
-const int ignoreAppleSafetyThreshold = 3;
+const int ignoreAppleSafetyThreshold = 2;
 
 struct Pos{
     int x, y;
@@ -1005,7 +1000,7 @@ public:
 
 
         if(manhattanDist(env.head, env.apple) <= 1 + borderDist){
-            return freePolicy(env, safety);
+            return freePolicy(env, safety, 0, hamCycle);
         }
 
         double minDist = INF;
@@ -1031,22 +1026,22 @@ public:
         return bestAction;
     }
 
-    int freePolicy(const Snake& env, int safety, double hamFactor=0, bool printMode=false){
+    int freePolicy(const Snake& env, int safety, double hamFactor, vector<int> cycle, bool printMode=false){
 
         // whichever ham cycle it currently shares the most segments with, follow that one
 
-        int maxCount = -1;
-        vector<int> bestCycle;
-        for(const auto& cycle : vector<vector<int>>{hamCycle, hamCycle2}){
-            int counter = 0;
-            for(int i=0; i<area; i++){
-                if(env.body[i] == cycle[i]) counter ++;
-            }
-            if(maxCount < counter){
-                maxCount = counter;
-                bestCycle = cycle;
-            }
-        }
+        // int maxCount = -1;
+        // vector<int> bestCycle;
+        // for(const auto& cycle : vector<vector<int>>{hamCycle, hamCycle2}){
+        //     int counter = 0;
+        //     for(int i=0; i<area; i++){
+        //         if(env.body[i] == cycle[i]) counter ++;
+        //     }
+        //     if(maxCount < counter){
+        //         maxCount = counter;
+        //         bestCycle = cycle;
+        //     }
+        // }
 
         double minDist = INF;
         int bestAction = -1;
@@ -1057,9 +1052,9 @@ public:
             newEnv.move(a);
             vector<double> heuristic = distanceHeuristic(newEnv, neighFeatures[a], safety, hamFactor == 0);
             // If safety <= ignoreAppleSafetyThreshold, ignore apple distance.
-            double candDist = heuristic[0] * (1-hamFactor) * (safety > ignoreAppleSafetyThreshold) + (a != bestCycle[ID(env.head)]) * (area * hamConstant * hamFactor) + heuristic[1];
+            double candDist = heuristic[0] * (1-hamFactor) * (safety > ignoreAppleSafetyThreshold) + (a != cycle[ID(env.head)]) * (hamBonus * hamFactor) + heuristic[1];
             if(printMode){
-                cout << "Action " << a << " immediate dist: " << heuristic[0] << " freeTime: " << heuristic[1] << " Is Ham: " << (a != bestCycle[ID(env.head)]) << '\n';
+                cout << "Action " << a << " immediate dist: " << heuristic[0] << " freeTime: " << heuristic[1] << " Is Ham: " << (a != cycle[ID(env.head)]) << '\n';
             }
             if(minDist > candDist){
                 minDist = candDist;
@@ -1074,7 +1069,7 @@ public:
 
     Features neighFeatures[4];
 
-    vector<int> shortestPath(const Snake& env, Policy policy, bool printMode=false, int maxTime=area){
+    vector<int> shortestPath(const Snake& env, Policy policy, vector<int> cycle, bool printMode=false, int maxTime=area){
 
         vector<int> moves;
         Snake curr_env = env;
@@ -1096,7 +1091,7 @@ public:
             int action = -1;
             for(int safety=maxSafety; safety>=0; safety--){
                 if(policy.type == FREE_POLICY){
-                    action = freePolicy(curr_env, safety, policy.hamFactor, printMode);
+                    action = freePolicy(curr_env, safety, policy.hamFactor, cycle, printMode);
                 }
                 else if(policy.type == BORDER_POLICY){
                     action = borderPolicy(curr_env, safety, policy.turn, printMode);
@@ -1139,19 +1134,22 @@ public:
 
         ofstream fout(logFile);
 
+        vector<vector<int>> cycles{hamCycle, hamCycle2};
+        int currCycle = 0;
+
         for(int i=0; i<area*2; i++){
             
 
             vector<vector<int>> paths;
             if(env.getSize() < endGameCutoff){
-                vector<int> free_path = shortestPath(env, FreePolicy(0), printMode>=2);
-                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), printMode>=2, free_path.size() * 1.5);
-                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), printMode>=2, free_path.size() * 1.5);
+                vector<int> free_path = shortestPath(env, FreePolicy(0), cycles[currCycle], printMode>=2);
+                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), cycles[currCycle], printMode>=2, free_path.size() * 1.5);
+                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), cycles[currCycle], printMode>=2, free_path.size() * 1.5);
                 paths = vector<vector<int>>{free_path, right_border_path, left_border_path};
             }
             else{
                 double hamFactor = min(1., decayRate * (env.getSize() - endGameCutoff));
-                vector<int> endgame_path = shortestPath(env, FreePolicy(hamFactor), printMode>=2);
+                vector<int> endgame_path = shortestPath(env, FreePolicy(hamFactor), cycles[currCycle], printMode>=2);
                 paths = vector<vector<int>>{endgame_path};
             }
             
@@ -1204,8 +1202,24 @@ public:
                 if(printMode >= 1){
                     cout << "Got stuck, using Ham cycle instead.\n";
                 }
-                path = shortestPath(env, FreePolicy(1), printMode>=2, 2*area);
+                path = shortestPath(env, FreePolicy(1), cycles[currCycle], printMode>=2, 2*area);
+
+                Snake curr_env = env;
+                for(int d : path){
+                    curr_env.move(d);
+                }
+                // If still not, switch to a different ham cycle
+
+                if(curr_env.head != curr_env.apple){
+                    if(printMode >= 1){
+                        cout << "Got stuck, switching to other cycle.\n";
+                    }
+                    currCycle = 1 - currCycle;
+                    path = shortestPath(env, FreePolicy(1), cycles[currCycle], printMode>=2, 2*area);
+                }
             }
+
+            
             
             Snake newEnv = env;
             vector<int> headLoc;
@@ -1254,15 +1268,23 @@ public:
         return TRAPPED;
     }
 
-    void runTrials(int numTrials, string outFile, string codeFile){
+    void log(ofstream& mainOut, string s){
+        cout << s;
+        mainOut << s;
+    }
+
+    void runTrials(int numTrials, string outFile, string codeFile, string mainFile){
         ofstream fout(outFile);
         ofstream codeOut(codeFile);
+        ofstream mainOut(mainFile);
 
         int totalSize = 0;
         int totalTime = 0;
         int numWins = 0;
         int winTime = 0;
-        cout << "Running " << numTrials << " trials...\n";
+
+        log(mainOut, "Running " + to_string(numTrials) + " trials...\n");
+
         for(int i=0; i<numTrials; i++){
             int endCause = simulate(Snake(), 0, INF, "state_logs/game_" + to_string(i) + ".txt");
 
@@ -1280,12 +1302,12 @@ public:
                 numWins ++;
                 winTime += time;
             }
-            cout << "Game " << i << " size: " << size << " time: " << time << " termination: " << endCause << '\n';
+            log(mainOut, "Game " + to_string(i) + " size: " + to_string(size) + " time: " + to_string(time) + " termination: " + to_string(endCause) + '\n');
         }
-        cout << "Average size: " << ((double) totalSize / numTrials) << '\n';
-        cout << "Average time: " << ((double) totalTime / numTrials) << '\n';
-        cout << "Win rate: " << ((double) numWins / numTrials) << '\n';
-        cout << "Average win time: " << ((double) winTime / numWins) << '\n';
+        log(mainOut, "Average size: " + to_string((double) totalSize / numTrials) + '\n');
+        log(mainOut, "Average time: " + to_string((double) totalTime / numTrials) + '\n');
+        log(mainOut, "Win rate: " + to_string((double) numWins / numTrials) + '\n');
+        log(mainOut, "Average win time: " + to_string((double) winTime / numWins) + '\n');
     }
 };
 
@@ -1307,6 +1329,23 @@ freeTimes: 0, 2, 10. Weights: 1, 3, 11 -> 2 * (3/15) + 10 * (11/15) = 7.73.
 
 */
 
+void runSavedEndGames(int numGames, int cutoff){
+    cout << "Running endgames only\n";
+    Solver solver;
+    for(int i=0; i<numGames; i++){
+        ifstream fin("state_logs/game_" + to_string(i) + ".txt");
+        string s;
+        for(int j=0; j<cutoff; j++){
+            fin >> s;
+        }
+        Snake env(s);
+        solver.simulate(env, 0, INF);
+        if(solver.lastState.getSize() < area){
+            cout << solver.lastState.toCode() << '\n';
+        }
+        cout << "Apples: " << solver.appleTimes.size() << '\n';
+    }
+}
 
 int main(){
     srand(1234);
@@ -1333,11 +1372,11 @@ int main(){
     // Snake env("1x8_6x0_8x0_47993_ggggggglgggggghxaaadnnjnnnnnnnjaaaeoonoooooohxaaaeooooooooonjaaaeooooooooohxaaaeooooooooonjaaaeooooooooohaaaaeooooooooonaaaaeooooooooohbggloooooooooonjnnooooooootttpxooooooooogggghjoooootootsssscxoooolotlllllonjooootlotooooohxooolooloooooonjooooooooooooohxoooooooooojjjnjoooooooooonnnhxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjoojjjjjjjjooohxttssssssssttts");
     // Snake env("20x29_28x12_12x29_46509_gggggggggggggghxnnnnnnnnnnnnnnjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooootpxooooooootttqlkjooooottqgggjjhxoooolggjnssssnjoooojnnsqlllohxoootnollooooonjooketttoooooohxookaabooooooonjookaaeooooooofxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaajjjjjjjjaxttpaaaaaaaaaaa");
     // Snake env("4x20_4x18_10x29_49574_gggggggggggggghxnnnnnnnnannnnnjooooooooaoooohxooottoooaoooonjooggooookeooohxoonnooookeooonjooooooookeooohxooooooookeooonjooooooookeooohxooooooookeooonjoooootttpetttpxoooogggggglllhjoooonnnnnnjoonxoooooooooonoohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooojjcxtttttttttttsss");
-    // Snake env("0x18_3x19_5x29_48088_ggggghgggaaaaaaxnnnnnxnnnaaaaajoooolooooaaaaaxoooooooooaaaaajooooooookaaaaaxooottoookaablkjoolloooopaboohxooooooolgkeoonjoooooooonkeoohxooooooooolooonjooooooooojjoohxooooooooonnoonjooooooooooooohxooooooooooooonjooooooooooooohxoooooootooooonjoooojjgjooooohxoooonnnnooooonjooooooooooooohxooooooooooooonjootjooooooooohxoqjnooooooooonjgjnoooooooooohxnnooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooojjhxtttttttttttsss");
-    // Snake env("18x0_2x29_26x16_11454_aaaaaaaaaaaaaaacsaaaaacrrrrrrpcjaaaaacxxxxxxwcxssssssggggggwcgggggggwsssssrcxsssssssgggggwcggggggggwssssscxrsssssssaaaaacgwgggggggkaaaacxruaaaaaakaaaacbwuaaaaaakaaaacjnuaaaaaakaaaacxluaaaaaalgghacjoaaacssstaacacxtaaabgggjaacabgjaaaaaaaaaacaaaaaaaaaaaaaacaaaaaaaaaaaaacradsssssssssssswaaaaaaaaaaaaaawaaaaaaaaaaaaaawaaaaaaaaaaaaaawaaaaaaaaaaaaaawaaaaaaaaaaaaaawaaaaaaaaaaaaaawaaaaaaaaaaaaaaxaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    // Snake env("0x0_25x23_17x2_14628_dssssssssssssssaacsspacsssssstaabkauacagggghyaaakaucsaxsssryaaakaubggggggwyaaakauaaaaaaanyaaakauaaaaaaakyaaakaxssssssspyaaakaaaaaaaaaayaaakaaaaaaaaaayaaakaaaaaaaaaayaaakaaaaaaaaaayaaakaaaaaaaaaayaaakaaaaaaaaaayaaakaaaaaaaaaayaaalkaaaaaaaaayaaaokaaaaaaaaaynaaokaaaaaaaaayoaaokaaaaaaaaayoaaokaaaaaaaaayoaajhaaaaaabkayoaaacaaaaabjkayoaaacaaaaaeaggyoaaacggggkeaaaeossssxssskeaaaeggggggggjkeqgkensssssssskaxspelgggggggjkaaaaeosssssssspaaaaeggggggggggggggj");
-    // Snake env("17x2_1x23_15x26_14679_nssssssssssssssgkcsspacssssaaenkbkauacaggggheokakaucsaxsssreokakaubggggggweokakauaaaaaaaneokakauaaaaaaakeokakaxssssssspeokakaaaaaaaaaaeokakaaaaaaaaaaeokakaaaaaaaaaaeokakaaaaaaaaaaeokakaaaaaaaaaaeokakaaaaaaaaaaeokakaaaaaaaaaaeopalkaaaaaaaaaeghaokaaaaaaaaaendaokaaaaaaaaaeoaaokaaaaaaaaaeoaaokaaaaaaaaaeoaajhaaaaaaaaaeoaaacaaaaaaaaaeoaaacaaaaaaaaaeoaaacggggkaaaaeossssxssskaaaaeggggggggjkaaaaensssssssskaaaaelgggggggjkaaaaeosssssssspaaaaeggggggggggggggj");
-    // Snake env("2x6_24x27_12x9_14052_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaawsssssssssssaaawaaaaaaaaaajaaawaaansssspaxaaawaaallgghuajaaawaaaojnsruaxaaawaaaorqhwuajaaawaaakwjbwuaxaggwaaakwxssuajawssaaakvggguaxawghaaakxsssspjavwraaagggkabuxaxswaansssqgjajaaawaalgggjnspxaaawaaosssnpbueaaawaaggljlgopeaaawaaaaostnlueaaawaaaakaetoaeaaawaaaagggooaeaaawaaaaaaajoaeaaawaaaaaaactaeaaawaaaaaaaceaeaaawaaaaaaaceceaaawaaaaaaaceceaaawaaacsaaceceaaaxaaacjaaceseaaaaaaacxsssaaeaaaaaaabggggggj");
+    Snake env("5x26_14x26_21x0_45705_gggggggggggggghxnannsssssssssneoaolllllllllokeoaooooojoooookeoaooooonoooookeoaoooojoooooekeoaoooonoooooekeoaooooooooooekeoaoooooojoooekeoaoooooonojoekeoaoooooooonoekeoaooooooooooekeoaotooooooooekeoagjjjooooooekeonnnsstttooookeooolgglloooookeoooonnjooooookeotoooonooooookeloooooojoooookeooooootstooooketooooqggojoookbjooogonnostookenooonjoolloookeooooonoooooookeootooooooooookeogotttttoooookeongglllooooookeoonnoooooooookeoooojjjjjjjjokettttsssssssstp");
+    // Snake env("7x4_5x8_3x29_46629_gggggggggggggghxnnnnnnssssncrreooooolllloonxxeoootttooootqlkeookbloooollookeotpooooooooookekaajjooooooookekdnnnooooooookekeoooooooooookekeoooooooooookekeoooooooooookekeoooooooooookelotooooooooookeolootooooooookeoooqoooooooookejjgooooooooookennnooooooooookeoooooooooooookeooooooooojjookeooojojooonnookeooonjnoooooookeoooonooooooookeoooooooojoojokeoooooooonoonokeoooooooooooookeoooooooooooookeoooooojjoooookeoooooonnoooookeoooooooooooojkettttttttttttsp");
+    // Snake env("12x27_2x27_28x28_52141_gggggggggggggghxnnnnnnnnnnnnnnjooooooooooooohxooooooooooooknjooooootoooookhxooooogooooooknjooootsooooookhxtttqloooooooknggllooootooookhxnooooogoooooknjoooooosoooookhxooooolooooooknjoooooooootttppxoooooooolllllhjooooooootoooonxoooooooljjjjohjoooooooonnnnonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooojjjjjooooonxooonnnnnooooohjooooooooooooonxooooooooooooohjojjoooooooooonxonnoooooooooohjoooooooooooojcxttttttttttttss");
+    // Snake env("18x25_6x27_4x0_45957_gggggggggglglghxnnnnnnnnnononneoooooooooooooheooooooooooooonetoooooooooojohheoooooooooontnvoooooooooookehxoooooooooookanjoooooooooookahxoooooooootokanjooooooooljopahxooooooootnqkanjoottooogjlokahxollotttsnookanjoooggggooookahxooonnnnottokanjoooooooggjokahxooooooonnnokanjoooooooooookahxooooooooooooanjooooooooooooahxoooooooooojoanjoooooooooonoahxotoooooooooonrjgjjoooooooojlwxnnnoooooooonorjoooooooooooolwxooooooooooooorjoooooooooooolwxttttttttttttts");
+    // Snake env("18x24_24x19_5x29_45620_gggggggggggggghxnnnnnnsssssssceoooooqgglllloceooooljnsoooooceooooonlooooooseooooooooooojgkeooooooooooonskeooooooooooolokeooottooooooookeoolgjooooooookeooonnooooooookeooooooojjjoookeooooooonnnoookeoooooooootoookeoooooooolooookeoooooooooooookeoooooooooooookeoooooooooooookeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeooooooooojjeokeoootttttpaaeokeoollllllllkeokeottoooooookeokeggjjjjjjjjgjjkesssssssssssssp");
     // env.move(1);
     
     // env.move(1);
@@ -1345,13 +1384,13 @@ int main(){
     // env.move(0);
     // env.move(0);
 
-    // cout << s.simulate(env, 2, 300) << "\n";
+    cout << s.simulate(env, 1, 300) << "\n";
 
     // s.endgamePolicy(env, true);
 
 
     // cout << s.minBorderDist(env) << '\n';
-    // s.shortestPath(env, FreePolicy(0), true);
+    // s.shortestPath(env, FreePolicy(1), s.hamCycle2, true);
     // s.computeBorder(env);
 
     // s.displayArray(env, env.body, true);
@@ -1369,7 +1408,9 @@ int main(){
 
     // s.displayArray(env, s.maxTimes);
 
-    // s.runTrials(50, "score.out", "code.out");
+    // s.runTrials(100, "score.out", "code.out", "log.out");
+
+    // runSavedEndGames(50, 700);
 
     cout << "Ellapsed time: " << (time(0) - start_time) << '\n';
 }
