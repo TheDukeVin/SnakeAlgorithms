@@ -26,22 +26,41 @@ g++ -O2 -std=c++23 snake.cpp && ./a.out
 #include <queue>
 using namespace std;
 
-typedef pair<int, int> pii;
 
-const int boardSize = 30;
+const int boardSize = 10;
+
+const double diffusiveTime = 10; // approximate for how long it takes to reach each apple.
+const double hamBonus = 100; // how strongly endgame algorithm follows ham cycle
+const int endGameCutoff = 60;
+const double decayRate = 1;
+const double borderBonus = 5;
+
+const int maxSafety = 4;
+const int ignoreAppleSafetyThreshold = 1;
+
+const int forceCycleCutoff = 80;
+
+
+// const int boardSize = 30;
+
+// const double diffusiveTime = 50; // approximate for how long it takes to reach each apple.
+// const double hamBonus = 100; // how strongly endgame algorithm follows ham cycle
+// const int endGameCutoff = 800;
+// const double decayRate = 1;
+// const double borderBonus = 10;
+
+// const int maxSafety = 6;
+// const int ignoreAppleSafetyThreshold = 2;
+
+// const int forceCycleCutoff = 850;
+
+
+
+
+
 const int area = boardSize * boardSize;
-
 const int EMPTY = -1;
 const int INF = 1 << 20;
-
-const double diffusiveTime = 50; // approximate for how long it takes to reach each apple.
-const double hamBonus = 100; // how strongly endgame algorithm follows ham cycle
-const int endGameCutoff = 800;
-const double decayRate = 1;
-const double borderBonus = 10;
-
-const int maxSafety = 6;
-const int ignoreAppleSafetyThreshold = 2;
 
 struct Pos{
     int x, y;
@@ -55,7 +74,11 @@ struct Pos{
     }
 };
 
+bool isValid(Pos p){
+    return 0 <= p.x && p.x < boardSize && 0 <= p.y && p.y < boardSize;
+}
 int ID(Pos p){
+    assert(isValid(p));
     return p.x*boardSize + p.y;
 }
 int ID(int x, int y){
@@ -65,11 +88,12 @@ Pos fromID(int id){
     return Pos{id / boardSize, id % boardSize};
 }
 
+string PosToString(Pos p){
+    return to_string(p.x) + '*' + to_string(p.y);
+}
+
 int dir[4][2] = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
 
-bool isValid(Pos p){
-    return 0 <= p.x && p.x < boardSize && 0 <= p.y && p.y < boardSize;
-}
 
 Pos shiftPos(const Pos& p, const int& d){
     return Pos{p.x + dir[d][0], p.y + dir[d][1]};
@@ -130,6 +154,7 @@ public:
         tail = CodeToPos(sections[1]);
         apple = CodeToPos(sections[2]);
         timer = stoi(sections[3]);
+        assert(sections[4].size() == area / 2);
         for(int i=0; i<area/2; i++){
             int c = sections[4][i] - 97;
             body.push_back(c/5-1);
@@ -160,6 +185,7 @@ public:
 
     bool move(int d){ // returns whether apple was achieved
         Pos newHead = shiftPos(head, d);
+        assert(0 <= d && d < 4);
         assert(isValid(newHead) && body[ID(newHead)] == -1);
 
         body[ID(head)] = d;
@@ -642,6 +668,273 @@ Policy BorderPolicy(int turn){
     return Policy(BORDER_POLICY, -1, turn);
 }
 
+class Cycle{
+public:
+    vector<int> direc;
+    int size;
+
+    Cycle(){
+        direc.assign(area, -1);
+        size = 0;
+    }
+
+    string serialize() const{
+        string s = "";
+        for(int i=0; i<area; i++){
+            s += to_string(direc[i]);
+        }
+        return s;
+    }
+
+    bool operator == (const Cycle& other) const{
+        return serialize() == other.serialize();
+    }
+
+    void fixCycle(){
+        size = 0;
+        for(int i=0; i<area; i++){
+            if(direc[i] != -1){
+                size ++;
+            }
+        }
+        if(!verifyCycle()){
+            direc.assign(area, -1);
+            size = 0;
+        }
+    }
+
+    bool verifyCycle(){
+        int start = -1;
+        for(int i=0; i<area; i++){
+            if(direc[i] != -1) start = i;
+        }
+        if(start == -1) return false;
+        vector<bool> filled(area, false);
+
+        Pos p = fromID(start);
+        for(int i=0; i<area; i++){
+            if(direc[ID(p)] == -1) return false;
+            filled[ID(p)] = true;
+            p = nextCell(p);
+            if(p == fromID(start)) break;
+        }
+
+        for(int i=0; i<area; i++){
+            if(filled[i] != (direc[i] != -1)){
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void display() const{
+        Snake env;
+        env.body = direc;
+        env.apple = env.head = env.tail = Pos(-1, -1);
+        cout << "Cycle size: " << size << '\n';
+        cout << env.toCode() << '\n';
+        env.display();
+        // for(int i=0; i<area; i++){
+        //     cout << direc[i] << ' ';
+        //     if(i % boardSize == boardSize-1){
+        //         cout << '\n';
+        //     }
+        // }
+    }
+
+    void setDir(Pos p, Pos q){
+        for(int d=0; d<4; d++){
+            if(shiftPos(p, d) == q){
+                direc[ID(p)] = d;
+                return;
+            }
+        }
+        assert(false);
+    }
+
+    Pos nextCell(Pos p) const{
+        assert(direc[ID(p)] != -1);
+        return shiftPos(p, direc[ID(p)]);
+    }
+
+    vector<Cycle> Lmove() const{
+        vector<Cycle> ans;
+        for(int i=0; i<area; i++){
+            if(direc[i] != -1) continue;
+            Pos emptyCell = fromID(i);
+            for(const Pos& p1 : validNeighs(emptyCell)){
+                if(direc[ID(p1)] == -1) continue;
+
+                Pos p2 = nextCell(p1);
+                Pos p3 = nextCell(p2);
+
+                if(manhattanDist(p3, emptyCell) == 1){
+                    Cycle newCycle = *this;
+                    newCycle.setDir(p1, emptyCell);
+                    newCycle.setDir(emptyCell, p3);
+                    newCycle.direc[ID(p2)] = -1;
+                    ans.push_back(newCycle);
+                }
+            }
+        }
+        return ans;
+    }
+
+    vector<Cycle> retraction() const{
+        vector<Cycle> ans;
+
+        for(int i=0; i<area; i++){
+            if(direc[i] == -1) continue;
+            Pos p1 = fromID(i);
+            Pos p2 = nextCell(p1);
+            Pos p3 = nextCell(p2);
+            Pos p4 = nextCell(p3);
+            if(manhattanDist(p1, p4) != 1) continue;
+            bool emptyNeigh = false;
+            for(const Pos& p : vector<Pos>{p2, p3}){
+                for(const Pos& q : validNeighs(p)){
+                    if(direc[ID(q)] == -1) emptyNeigh = true;
+                }
+            }
+            if(!emptyNeigh) continue;
+            Cycle newCycle = *this;
+            newCycle.setDir(p1, p4);
+            newCycle.direc[ID(p2)] = -1;
+            newCycle.direc[ID(p3)] = -1;
+            newCycle.size -= 2;
+            ans.push_back(newCycle);
+        }
+
+        return ans;
+    }
+
+    vector<Cycle> extension() const{
+        vector<Cycle> ans;
+
+        for(int i=0; i<area; i++){
+            if(direc[i] == -1) continue;
+            Pos p1 = fromID(i);
+            Pos p2 = nextCell(p1);
+
+            for(const Pos& p : validNeighs(p1)){
+                if(p == p2) continue;
+                if(direc[ID(p)] != -1) continue;
+                for(const Pos& q : validNeighs(p2)){
+                    if(q == p1) continue;
+                    if(direc[ID(q)] != -1) continue;
+                    if(manhattanDist(p, q) != 1) continue;
+                    Cycle newCycle = *this;
+                    newCycle.setDir(p1, p);
+                    newCycle.setDir(p, q);
+                    newCycle.setDir(q, p2);
+                    newCycle.size += 2;
+                    ans.push_back(newCycle);
+                }
+            }
+        }
+
+        return ans;
+    }
+
+    Cycle fill();
+};
+
+struct CycleHash {
+    size_t operator()(const Cycle& c) const {
+        return std::hash<string>{}(c.serialize());
+    }
+};
+
+struct distedCycle{
+    int dist;
+    Cycle cycle;
+
+    bool operator < (const distedCycle& other) const{
+        return dist > other.dist;
+    }
+
+    distedCycle(Cycle c){
+        cycle = c;
+        vector<Pos> emptyCells;
+        for(int i=0; i<area; i++){
+            if(cycle.direc[i] == -1) emptyCells.push_back(fromID(i));
+        }
+        dist = 0;
+        for(const Pos& p : emptyCells){
+            for(const Pos& q : emptyCells){
+                dist = max(dist, manhattanDist(p, q));
+            }
+        }
+    }
+};
+
+Cycle Cycle::fill(){
+
+    priority_queue<distedCycle> q;
+
+    q.push(distedCycle(*this));
+
+    unordered_set<Cycle, CycleHash> visited;
+    visited.insert(*this);
+
+    for(int i=0; i<area*area; i++){
+        if(q.size() == 0) break;
+        distedCycle top = q.top();
+        Cycle cyc = top.cycle;
+        int dist = top.dist;
+        q.pop();
+
+        // cyc.display();
+        // cout << "Hi " << dist << '\n';
+
+        // {
+        //     string s;
+        //     getline(cin, s);
+        // }
+
+
+        if(cyc.size == area){
+            return cyc;
+        }
+
+        vector<Cycle> adjCycles;
+        for(const Cycle& c : cyc.extension()){
+            adjCycles.push_back(c);
+        }
+        if(cyc.size >= area-2){
+            for(const Cycle& c : cyc.retraction()){
+                adjCycles.push_back(c);
+            }
+            for(const Cycle& c : cyc.Lmove()){
+                adjCycles.push_back(c);
+            }
+        }
+
+
+        for(const Cycle& c : adjCycles){
+            if(!visited.contains(c)){
+                visited.insert(c);
+                // c.display();
+                // cout << "New thing\n";
+
+                // {
+                //     string s;
+                //     getline(cin, s);
+                // }
+                q.push(distedCycle(c));
+            }
+        }
+    }
+
+    cout << "FATAL: cycle not found\n";
+
+    assert(false);
+
+    return *this;
+}
+
+
+
 class Solver{
 public:
     vector<int> hamCycle;
@@ -657,49 +950,55 @@ public:
         return ans;
     }
 
+    void concat(vector<int>& arr, const vector<int> newNums){
+        for(const int& x : newNums){
+            arr.push_back(x);
+        }
+    }
+
     Solver(){
 
         vector<int> moves;
-        moves.append_range(vector<int>(boardSize-1, 1));
+        concat(moves, vector<int>(boardSize-1, 1));
         for(int i=0; i<boardSize/2-1; i++){
             moves.push_back(0);
-            moves.append_range(vector<int>(boardSize-2, 3));
+            concat(moves, vector<int>(boardSize-2, 3));
             moves.push_back(0);
-            moves.append_range(vector<int>(boardSize-2, 1));
+            concat(moves, vector<int>(boardSize-2, 1));
         }
         moves.push_back(0);
-        moves.append_range(vector<int>(boardSize-1, 3));
-        moves.append_range(vector<int>(boardSize-1, 2));
+        concat(moves, vector<int>(boardSize-1, 3));
+        concat(moves, vector<int>(boardSize-1, 2));
 
         hamCycle = convertToCycle(moves);
 
         // moves = vector<int>();
-        // moves.append_range(vector<int>(boardSize-1, 1));
-        // moves.append_range(vector<int>(boardSize-1, 0));
-        // moves.append_range(vector<int>(boardSize-1, 3));
+        // concat(moves, vector<int>(boardSize-1, 1));
+        // concat(moves, vector<int>(boardSize-1, 0));
+        // concat(moves, vector<int>(boardSize-1, 3));
         // for(int i=0; i<boardSize/2-1; i++){
         //     moves.push_back(2);
-        //     moves.append_range(vector<int>(boardSize-2, 1));
+        //     concat(moves, vector<int>(boardSize-2, 1));
         //     moves.push_back(2);
-        //     moves.append_range(vector<int>(boardSize-2, 3));
+        //     concat(moves, vector<int>(boardSize-2, 3));
         // }
         // moves.push_back(2);
 
         moves = vector<int>();
-        moves.append_range(vector<int>(boardSize-1, 0));
+        concat(moves, vector<int>(boardSize-1, 0));
         for(int i=0; i<boardSize/2-1; i++){
-            moves.append_range(vector<int>{1, 2, 1, 0});
+            concat(moves, vector<int>{1, 2, 1, 0});
         }
-        moves.append_range(vector<int>{1, 2});
+        concat(moves, vector<int>{1, 2});
         for(int i=0; i<boardSize/2-2; i++){
             moves.push_back(2);
-            moves.append_range(vector<int>(boardSize-2, 3));
+            concat(moves, vector<int>(boardSize-2, 3));
             moves.push_back(2);
-            moves.append_range(vector<int>(boardSize-2, 1));
+            concat(moves, vector<int>(boardSize-2, 1));
         }
-        moves.append_range(vector<int>{2, 2});
+        concat(moves, vector<int>{2, 2});
         for(int i=0; i<boardSize/2-1; i++){
-            moves.append_range(vector<int>{3, 0, 3, 2});
+            concat(moves, vector<int>{3, 0, 3, 2});
         }
         moves.push_back(3);
 
@@ -1054,7 +1353,7 @@ public:
             // If safety <= ignoreAppleSafetyThreshold, ignore apple distance.
             double candDist = heuristic[0] * (1-hamFactor) * (safety > ignoreAppleSafetyThreshold) + (a != cycle[ID(env.head)]) * (hamBonus * hamFactor) + heuristic[1];
             if(printMode){
-                cout << "Action " << a << " immediate dist: " << heuristic[0] << " freeTime: " << heuristic[1] << " Is Ham: " << (a != cycle[ID(env.head)]) << '\n';
+                cout << "Action " << a << " immediate dist: " << heuristic[0] << " freeTime: " << heuristic[1] << " Is not Ham: " << (a != cycle[ID(env.head)]) << '\n';
             }
             if(minDist > candDist){
                 minDist = candDist;
@@ -1069,7 +1368,7 @@ public:
 
     Features neighFeatures[4];
 
-    vector<int> shortestPath(const Snake& env, Policy policy, vector<int> cycle, bool printMode=false, int maxTime=area){
+    vector<int> shortestPath(const Snake& env, Policy policy, vector<int> cycle, bool printMode=false, int maxTime=area, bool continuePath=false){
 
         vector<int> moves;
         Snake curr_env = env;
@@ -1110,11 +1409,50 @@ public:
             
             curr_env.move(action);
             moves.push_back(action);
-            if(curr_env.head == curr_env.apple || curr_env.validMoves().size() == 0){
+            if((curr_env.head == curr_env.apple && !continuePath) || curr_env.validMoves().size() == 0){
                 break;
             }
         }
         return moves;
+    }
+
+    Cycle cycleFromPath(const Snake& env, vector<int> path){
+        Cycle c;
+        Pos currPos = env.head;
+        // env.display();
+        for(int i=0; i<path.size(); i++){
+            // cout << PosToString(currPos) << ' ';
+            if(i >= path.size()-area){
+                c.direc[ID(currPos)] = path[i];
+            }
+            currPos = shiftPos(currPos, path[i]);
+        }
+        // cout << '\n';
+        c.fixCycle();
+        return c;
+    }
+
+    vector<int> getCycle(const Snake& env, bool printMode){
+        Cycle cycle1 = cycleFromPath(env, shortestPath(env, FreePolicy(1), hamCycle, false, area*3, true));
+        Cycle cycle2 = cycleFromPath(env, shortestPath(env, FreePolicy(1), hamCycle2, false, area*3, true));
+        Cycle longestCycle = (cycle1.size > cycle2.size) ? cycle1 : cycle2;
+
+        if(printMode){
+
+            cout << "Current cycle:\n";
+            longestCycle.display();
+        }
+        
+
+        Cycle filled = longestCycle.fill();
+
+        if(printMode){
+            cout << "Filled cycle:\n";
+            filled.display();
+        }
+
+
+        return filled.direc;
     }
 
     vector<int> appleTimes;
@@ -1132,24 +1470,31 @@ public:
 
         appleTimes = vector<int>();
 
-        ofstream fout(logFile);
+        {
+            ofstream fout(logFile);
+            fout.close();
+        }
+        
 
-        vector<vector<int>> cycles{hamCycle, hamCycle2};
-        int currCycle = 0;
+        vector<vector<int>> my_cycles{hamCycle, hamCycle2};
+        int currCycleID = 0;
+        vector<int> currCycle = hamCycle;
+
+        bool forcedCycle = false;
 
         for(int i=0; i<area*2; i++){
             
 
             vector<vector<int>> paths;
             if(env.getSize() < endGameCutoff){
-                vector<int> free_path = shortestPath(env, FreePolicy(0), cycles[currCycle], printMode>=2);
-                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), cycles[currCycle], printMode>=2, free_path.size() * 1.5);
-                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), cycles[currCycle], printMode>=2, free_path.size() * 1.5);
+                vector<int> free_path = shortestPath(env, FreePolicy(0), currCycle, printMode>=2);
+                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), currCycle, printMode>=2, free_path.size() * 1.5);
+                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), currCycle, printMode>=2, free_path.size() * 1.5);
                 paths = vector<vector<int>>{free_path, right_border_path, left_border_path};
             }
             else{
                 double hamFactor = min(1., decayRate * (env.getSize() - endGameCutoff));
-                vector<int> endgame_path = shortestPath(env, FreePolicy(hamFactor), cycles[currCycle], printMode>=2);
+                vector<int> endgame_path = shortestPath(env, FreePolicy(hamFactor), currCycle, printMode>=2);
                 paths = vector<vector<int>>{endgame_path};
             }
             
@@ -1191,6 +1536,7 @@ public:
 
             if(bestPath == -1) bestPath = 0;
             vector<int> path = paths[bestPath];
+            Snake newEnv = envs[bestPath];
 
             if(printMode >= 1){
                 cout << "Using path " << bestPath << '\n';
@@ -1198,30 +1544,61 @@ public:
 
             // Check to see if apple was eaten. If not, use Hamiltonian path
 
-            if(envs[bestPath].head != envs[bestPath].apple){
+            if(newEnv.head != newEnv.apple){
                 if(printMode >= 1){
                     cout << "Got stuck, using Ham cycle instead.\n";
                 }
-                path = shortestPath(env, FreePolicy(1), cycles[currCycle], printMode>=2, 2*area);
+                path = shortestPath(env, FreePolicy(1), currCycle, printMode>=2, 2*area);
 
-                Snake curr_env = env;
+                newEnv = env;
                 for(int d : path){
-                    curr_env.move(d);
+                    newEnv.move(d);
                 }
-                // If still not, switch to a different ham cycle
+            }
 
-                if(curr_env.head != curr_env.apple){
-                    if(printMode >= 1){
-                        cout << "Got stuck, switching to other cycle.\n";
-                    }
-                    currCycle = 1 - currCycle;
-                    path = shortestPath(env, FreePolicy(1), cycles[currCycle], printMode>=2, 2*area);
+            // If still not, switch to a different ham cycle
+
+            if(newEnv.head != newEnv.apple){
+                if(printMode >= 1){
+                    cout << "Got stuck, switching to other cycle.\n";
                 }
+                currCycleID = 1 - currCycleID;
+                currCycle = my_cycles[currCycleID];
+                path = shortestPath(env, FreePolicy(1), currCycle, printMode>=2, 2*area);
+
+                newEnv = env;
+                for(int d : path){
+                    newEnv.move(d);
+                }
+            }
+
+            // If still not, use cycle finding
+
+            if(newEnv.head != newEnv.apple){
+                if(printMode >= 1){
+                    cout << "Got stuck, calling cycle finding.\n";
+                }
+                currCycle = getCycle(env, printMode >= 1);
+                forcedCycle = true;
+                path = shortestPath(env, FreePolicy(1), currCycle, printMode>=2, 2*area);
+
+                newEnv = env;
+                for(int d : path){
+                    newEnv.move(d);
+                }
+            }
+
+            if(env.getSize() >= forceCycleCutoff && !forcedCycle){
+                if(printMode >= 1){
+                    cout << "Forcing Ham cycle\n";
+                }
+                currCycle = getCycle(env, printMode >= 1);
+                forcedCycle = true;
             }
 
             
             
-            Snake newEnv = env;
+            newEnv = env;
             vector<int> headLoc;
             for(int d : path){
                 newEnv.move(d);
@@ -1242,6 +1619,7 @@ public:
             }
 
             if(logFile != ""){
+                ofstream fout(logFile, ios::app);
                 fout << env.toCode() << '\n';
             }
 
@@ -1268,22 +1646,28 @@ public:
         return TRAPPED;
     }
 
-    void log(ofstream& mainOut, string s){
+    void log(string mainFile, string s){
+        ofstream fout(mainFile, ios::app);
         cout << s;
-        mainOut << s;
+        fout << s;
     }
 
     void runTrials(int numTrials, string outFile, string codeFile, string mainFile){
         ofstream fout(outFile);
         ofstream codeOut(codeFile);
-        ofstream mainOut(mainFile);
+        {
+            ofstream mainOut(mainFile);
+            mainOut.close();
+        }
 
         int totalSize = 0;
         int totalTime = 0;
         int numWins = 0;
         int winTime = 0;
 
-        log(mainOut, "Running " + to_string(numTrials) + " trials...\n");
+        unsigned long start_time = time(0);
+
+        log(mainFile, "Running " + to_string(numTrials) + " trials...\n");
 
         for(int i=0; i<numTrials; i++){
             int endCause = simulate(Snake(), 0, INF, "state_logs/game_" + to_string(i) + ".txt");
@@ -1302,13 +1686,17 @@ public:
                 numWins ++;
                 winTime += time;
             }
-            log(mainOut, "Game " + to_string(i) + " size: " + to_string(size) + " time: " + to_string(time) + " termination: " + to_string(endCause) + '\n');
+            log(mainFile, "Game " + to_string(i) + " size: " + to_string(size) + " time: " + to_string(time) + " termination: " + to_string(endCause) + '\n');
         }
-        log(mainOut, "Average size: " + to_string((double) totalSize / numTrials) + '\n');
-        log(mainOut, "Average time: " + to_string((double) totalTime / numTrials) + '\n');
-        log(mainOut, "Win rate: " + to_string((double) numWins / numTrials) + '\n');
-        log(mainOut, "Average win time: " + to_string((double) winTime / numWins) + '\n');
+        log(mainFile, "Average size: " + to_string((double) totalSize / numTrials) + '\n');
+        log(mainFile, "Average time: " + to_string((double) totalTime / numTrials) + '\n');
+        log(mainFile, "Win rate: " + to_string((double) numWins / numTrials) + '\n');
+        log(mainFile, "Average win time: " + to_string((double) winTime / numWins) + '\n');
+
+        log(mainFile, "Ellapsed time: " + to_string(time(0) - start_time) + '\n');
     }
+
+
 };
 
 /*
@@ -1348,9 +1736,7 @@ void runSavedEndGames(int numGames, int cutoff){
 }
 
 int main(){
-    srand(1234);
-
-    unsigned long start_time = time(0);
+    srand(42);
 
     Solver s;
 
@@ -1363,28 +1749,22 @@ int main(){
     // s.displayArray(env, s.hamCycle2);
     // cout << '\n';
 
-    // Snake env("6x8_9x8_6x9_302_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabgggaesssagggjaxsssp");
+    // Snake env("9x5_7x1_3x9_524_gghaawsrhavhwwawswwaxgvwaaunsaaukaabwpaaanhaaaguaa");
     // env.move(0);
     // env.move(0);
     // env.move(0);
     // env.move(3);
 
-    // Snake env("1x8_6x0_8x0_47993_ggggggglgggggghxaaadnnjnnnnnnnjaaaeoonoooooohxaaaeooooooooonjaaaeooooooooohxaaaeooooooooonjaaaeooooooooohaaaaeooooooooonaaaaeooooooooohbggloooooooooonjnnooooooootttpxooooooooogggghjoooootootsssscxoooolotlllllonjooootlotooooohxooolooloooooonjooooooooooooohxoooooooooojjjnjoooooooooonnnhxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjoojjjjjjjjooohxttssssssssttts");
-    // Snake env("20x29_28x12_12x29_46509_gggggggggggggghxnnnnnnnnnnnnnnjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooootpxooooooootttqlkjooooottqgggjjhxoooolggjnssssnjoooojnnsqlllohxoootnollooooonjooketttoooooohxookaabooooooonjookaaeooooooofxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaaeoooooooaxookaaeoooooooajookaajjjjjjjjaxttpaaaaaaaaaaa");
-    // Snake env("4x20_4x18_10x29_49574_gggggggggggggghxnnnnnnnnannnnnjooooooooaoooohxooottoooaoooonjooggooookeooohxoonnooookeooonjooooooookeooohxooooooookeooonjooooooookeooohxooooooookeooonjoooootttpetttpxoooogggggglllhjoooonnnnnnjoonxoooooooooonoohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooojjcxtttttttttttsss");
-    Snake env("5x26_14x26_21x0_45705_gggggggggggggghxnannsssssssssneoaolllllllllokeoaooooojoooookeoaooooonoooookeoaoooojoooooekeoaoooonoooooekeoaooooooooooekeoaoooooojoooekeoaoooooonojoekeoaoooooooonoekeoaooooooooooekeoaotooooooooekeoagjjjooooooekeonnnsstttooookeooolgglloooookeoooonnjooooookeotoooonooooookeloooooojoooookeooooootstooooketooooqggojoookbjooogonnostookenooonjoolloookeooooonoooooookeootooooooooookeogotttttoooookeongglllooooookeoonnoooooooookeoooojjjjjjjjokettttsssssssstp");
-    // Snake env("7x4_5x8_3x29_46629_gggggggggggggghxnnnnnnssssncrreooooolllloonxxeoootttooootqlkeookbloooollookeotpooooooooookekaajjooooooookekdnnnooooooookekeoooooooooookekeoooooooooookekeoooooooooookekeoooooooooookelotooooooooookeolootooooooookeoooqoooooooookejjgooooooooookennnooooooooookeoooooooooooookeooooooooojjookeooojojooonnookeooonjnoooooookeoooonooooooookeoooooooojoojokeoooooooonoonokeoooooooooooookeoooooooooooookeoooooojjoooookeoooooonnoooookeoooooooooooojkettttttttttttsp");
-    // Snake env("12x27_2x27_28x28_52141_gggggggggggggghxnnnnnnnnnnnnnnjooooooooooooohxooooooooooooknjooooootoooookhxooooogooooooknjooootsooooookhxtttqloooooooknggllooootooookhxnooooogoooooknjoooooosoooookhxooooolooooooknjoooooooootttppxoooooooolllllhjooooooootoooonxoooooooljjjjohjoooooooonnnnonxooooooooooooohjooooooooooooonxooooooooooooohjooooooooooooonxooooooooooooohjooojjjjjooooonxooonnnnnooooohjooooooooooooonxooooooooooooohjojjoooooooooonxonnoooooooooohjoooooooooooojcxttttttttttttss");
-    // Snake env("18x25_6x27_4x0_45957_gggggggggglglghxnnnnnnnnnononneoooooooooooooheooooooooooooonetoooooooooojohheoooooooooontnvoooooooooookehxoooooooooookanjoooooooooookahxoooooooootokanjooooooooljopahxooooooootnqkanjoottooogjlokahxollotttsnookanjoooggggooookahxooonnnnottokanjoooooooggjokahxooooooonnnokanjoooooooooookahxooooooooooooanjooooooooooooahxoooooooooojoanjoooooooooonoahxotoooooooooonrjgjjoooooooojlwxnnnoooooooonorjoooooooooooolwxooooooooooooorjoooooooooooolwxttttttttttttts");
-    // Snake env("18x24_24x19_5x29_45620_gggggggggggggghxnnnnnnsssssssceoooooqgglllloceooooljnsoooooceooooonlooooooseooooooooooojgkeooooooooooonskeooooooooooolokeooottooooooookeoolgjooooooookeooonnooooooookeooooooojjjoookeooooooonnnoookeoooooooootoookeoooooooolooookeoooooooooooookeoooooooooooookeoooooooooooookeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeoooooooooooeokeooooooooojjeokeoootttttpaaeokeoollllllllkeokeottoooooookeokeggjjjjjjjjgjjkesssssssssssssp");
-    // env.move(1);
-    
+
+    // Snake env("10x14_22x0_6x9_45524_nsssssssssssssslllllllllllllloooooooooooooooooooojjoooooooooooooaaooooooojoooooaaooooooontooojaajjjjooolooojaaaannnoooooooablkaooooooooooaeokaottooooojjaeokablojjjooaaboolkeoossstoabjoooljjllllooaenoooonnjooooobjojjoooonjjjooenonnooooosssooeoooooooollloooeoooooooooooojoeoooooooooooosoeooooooooooolooettttooooooooooblllooooooooooooooooooooooooooooooooooooooootoooooooooooooloooooooooooooooooooooooooooooooooooooooooooooooooooooottooooojjjjjjjggjjjjjj");
+
+
     // env.move(1);
     // env.move(0);
     // env.move(0);
     // env.move(0);
 
-    cout << s.simulate(env, 1, 300) << "\n";
+    // cout << s.simulate(env, 1, 0) << "\n";
 
     // s.endgamePolicy(env, true);
 
@@ -1408,9 +1788,7 @@ int main(){
 
     // s.displayArray(env, s.maxTimes);
 
-    // s.runTrials(100, "score.out", "code.out", "log.out");
+    s.runTrials(1000, "score.out", "code.out", "log.out");
 
     // runSavedEndGames(50, 700);
-
-    cout << "Ellapsed time: " << (time(0) - start_time) << '\n';
 }
