@@ -29,6 +29,8 @@ times = []
 for i in range(max(endpoint_y)):
     times.append(np.array([arrs[x][i+1] - arrs[x][i] for x in range(len(arrs)) if len(arrs[x]) > i+1]).mean())
 
+# print(times)
+
 cum_times = np.array(times).cumsum()
 
 plt.figure()
