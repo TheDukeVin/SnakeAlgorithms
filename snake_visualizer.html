@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake AI Visualizer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+  :root {
+    --bg:        #050a0e;
+    --panel:     #0a1520;
+    --border:    #0f2a3f;
+    --snake-head: #00ffe7;
+    --snake-body: #00b8a0;
+    --snake-tail: #006e60;
+    --apple:     #ff3860;
+    --apple-glow:#ff386088;
+    --empty:     #0d1f2d;
+    --grid-line: #0a1a28;
+    --text:      #c0e8e0;
+    --dim:       #3a6070;
+    --accent:    #00ffe7;
+    --danger:    #ff3860;
+    --cell:      18px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.07) 2px,
+      rgba(0,0,0,0.07) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 1.6rem;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    text-shadow: 0 0 18px #00ffe788, 0 0 40px #00ffe730;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    font-size: 0.72rem;
+    letter-spacing: 0.25em;
+    color: var(--dim);
+    margin-bottom: 24px;
+    text-transform: uppercase;
+  }
+
+  /* ── Upload zone ── */
+  #drop-zone {
+    width: 540px;
+    max-width: 100%;
+    border: 2px dashed var(--border);
+    border-radius: 4px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    background: var(--panel);
+    margin-bottom: 28px;
+  }
+  #drop-zone:hover, #drop-zone.drag-over {
+    border-color: var(--accent);
+    background: #0d2030;
+  }
+  #drop-zone p { color: var(--dim); font-size: 0.85rem; line-height: 1.8; }
+  #drop-zone span { color: var(--accent); }
+  #file-input { display: none; }
+
+  /* ── Main layout ── */
+  #main {
+    display: none;
+    flex-direction: row;
+    gap: 24px;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 940px;
+  }
+
+  /* ── Canvas ── */
+  #canvas-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  canvas {
+    display: block;
+    border: 1px solid var(--border);
+    box-shadow: 0 0 40px #00ffe712, inset 0 0 60px #00000060;
+  }
+
+  /* ── Side panel ── */
+  #panel {
+    flex: 1;
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .stat-block {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 16px;
+  }
+  .stat-label {
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-shadow: 0 0 12px #00ffe760;
+  }
+  .stat-value.danger { color: var(--danger); text-shadow: 0 0 12px #ff386060; }
+
+  /* ── Controls ── */
+  #controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.8rem;
+    letter-spacing: 0.12em;
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+    text-transform: uppercase;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); background: #0d2030; }
+  .btn.primary { border-color: var(--accent); color: var(--bg); background: var(--accent); font-weight: bold; }
+  .btn.primary:hover { background: #00d4c2; border-color: #00d4c2; }
+  .btn:disabled { opacity: 0.3; cursor: default; }
+
+  .speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .speed-row label {
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  #progress-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 10px 14px;
+  }
+  .prog-label {
+    font-size: 0.62rem;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  #progress-bar-bg {
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #progress-bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width .1s;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  #progress-text {
+    font-size: 0.68rem;
+    color: var(--dim);
+    margin-top: 5px;
+    text-align: right;
+  }
+
+  #status-line {
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    min-height: 1.2em;
+  }
+  #status-line.active { color: var(--accent); }
+
+  /* Legend */
+  .legend {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .legend-title {
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    color: var(--text);
+  }
+  .swatch {
+    width: 13px; height: 13px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 700px) {
+    #main { flex-direction: column; align-items: center; }
+    #panel { width: 100%; max-width: 540px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>SNAKE AI</h1>
+<p class="subtitle">BCC · Tarjan · Pathfinding Visualizer</p>
+
+<div id="drop-zone">
+  <p>Drop <span>game.out</span> here<br>or <span id="browse-link" style="cursor:pointer;text-decoration:underline;">click to browse</span></p>
+  <input type="file" id="file-input" accept=".out,.txt">
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="panel">
+    <div class="stat-block">
+      <div class="stat-label">Score (Size)</div>
+      <div class="stat-value" id="stat-size">2</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Step</div>
+      <div class="stat-value" id="stat-step">0</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Apples Eaten</div>
+      <div class="stat-value danger" id="stat-apples">0</div>
+    </div>
+
+    <div id="controls">
+      <button class="btn primary" id="btn-play">▶ PLAY</button>
+      <button class="btn" id="btn-step-back">◀ STEP BACK</button>
+      <button class="btn" id="btn-step-fwd">STEP FWD ▶</button>
+      <button class="btn" id="btn-reset">⟳ RESET</button>
+      <div class="speed-row">
+        <label>Speed</label>
+        <input type="range" id="speed-slider" min="1" max="120" value="15">
+      </div>
+    </div>
+
+    <div id="progress-wrap">
+      <div class="prog-label">Progress</div>
+      <div id="progress-bar-bg"><div id="progress-bar"></div></div>
+      <div id="progress-text">0 / 0 moves</div>
+    </div>
+
+    <div id="status-line"></div>
+
+    <div class="legend">
+      <div class="legend-title">Legend</div>
+      <div class="legend-row"><div class="swatch" style="background:#00ffe7;box-shadow:0 0 6px #00ffe7"></div> Head</div>
+      <div class="legend-row"><div class="swatch" style="background:#00b8a0"></div> Body</div>
+      <div class="legend-row"><div class="swatch" style="background:#005548"></div> Tail</div>
+      <div class="legend-row"><div class="swatch" style="background:#ff3860;box-shadow:0 0 6px #ff3860"></div> Apple</div>
+      <div class="legend-row"><div class="swatch" style="background:#0d1f2d;border:1px solid #0a1a28"></div> Empty</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// Constants mirroring C++ code exactly
+// ─────────────────────────────────────────────
+const BOARD_SIZE = 30;
+const AREA = BOARD_SIZE * BOARD_SIZE;
+const EMPTY_VAL = -1;
+const DIR = [[0,1],[1,0],[0,-1],[-1,0]]; // same as C++ dir[4][2]
+
+function ID(x, y) { return x * BOARD_SIZE + y; }
+function fromID(id) { return { x: Math.floor(id / BOARD_SIZE), y: id % BOARD_SIZE }; }
+function isValid(x, y) { return x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE; }
+function shiftPos(x, y, d) { return { x: x + DIR[d][0], y: y + DIR[d][1] }; }
+
+// ─────────────────────────────────────────────
+// Snake state — mirrors the C++ Snake class
+// ─────────────────────────────────────────────
+function makeInitialSnake() {
+  const body = new Int8Array(AREA).fill(EMPTY_VAL);
+  const hx = Math.floor(BOARD_SIZE / 2), hy = 1;
+  const tx = Math.floor(BOARD_SIZE / 2), ty = 0;
+  body[ID(tx, ty)] = 0; // tail points right (dir 0)
+  return { body, hx, hy, tx, ty, ax: 0, ay: 0, timer: 0 };
+}
+
+function cloneSnake(s) {
+  return {
+    body: new Int8Array(s.body),
+    hx: s.hx, hy: s.hy,
+    tx: s.tx, ty: s.ty,
+    ax: s.ax, ay: s.ay,
+    timer: s.timer
+  };
+}
+
+// Apply move direction d — mirrors Snake::move()
+function applyMove(s, d) {
+  s = cloneSnake(s);
+  const nh = shiftPos(s.hx, s.hy, d);
+
+  // store direction in current head cell
+  s.body[ID(s.hx, s.hy)] = d;
+  s.hx = nh.x;
+  s.hy = nh.y;
+
+  const appleEaten = (s.hx === s.ax && s.hy === s.ay);
+
+  if (!appleEaten) {
+    const tailDir = s.body[ID(s.tx, s.ty)];
+    s.body[ID(s.tx, s.ty)] = EMPTY_VAL;
+    const nt = shiftPos(s.tx, s.ty, tailDir);
+    s.tx = nt.x;
+    s.ty = nt.y;
+  }
+
+  s.timer += 1;
+  return { state: s, appleEaten };
+}
+
+function getSize(s) {
+  let cnt = 1; // head is never in body
+  for (let i = 0; i < AREA; i++) if (s.body[i] !== EMPTY_VAL) cnt++;
+  return cnt;
+}
+
+// ─────────────────────────────────────────────
+// Parse game.out
+// ─────────────────────────────────────────────
+function parseGameOut(text) {
+  // Returns ordered list of events: {type:'M',d} or {type:'A',x,y}
+  const events = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.startsWith('M ')) {
+      events.push({ type: 'M', d: parseInt(t.slice(2)) });
+    } else if (t.startsWith('A ')) {
+      const parts = t.split(' ');
+      events.push({ type: 'A', x: parseInt(parts[1]), y: parseInt(parts[2]) });
+    }
+  }
+  return events;
+}
+
+// Pre-compute all snake states so we can scrub freely
+function buildStateHistory(events) {
+  const states = [];
+  let s = makeInitialSnake();
+  // The first apple must be set before any moves.
+  // In the C++ code the first apple is set in the Snake constructor via randomizeApple()
+  // and written to game.out as the first 'A' event before any 'M' events.
+  // We start with a dummy apple position; the first A event sets it.
+  s.ax = -1; s.ay = -1;
+
+  states.push({ snap: cloneSnake(s), appleCount: 0, event: null });
+
+  let appleCount = 0;
+
+  for (const ev of events) {
+    if (ev.type === 'A') {
+      s = cloneSnake(s);
+      s.ax = ev.x;
+      s.ay = ev.y;
+      // Don't push a new visual state for A — apple placement is immediate
+      // Update the last state's apple position
+      states[states.length - 1].snap.ax = s.ax;
+      states[states.length - 1].snap.ay = s.ay;
+      appleCount++;
+    } else if (ev.type === 'M') {
+      const { state: ns, appleEaten } = applyMove(s, ev.d);
+      s = ns;
+      states.push({ snap: cloneSnake(s), appleCount, event: ev });
+      if (appleEaten) appleCount++;
+    }
+  }
+  return states;
+}
+
+// ─────────────────────────────────────────────
+// Rendering
+// ─────────────────────────────────────────────
+const CELL = 18;
+const PAD  = 1;
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+canvas.width  = BOARD_SIZE * CELL;
+canvas.height = BOARD_SIZE * CELL;
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return [r,g,b];
+}
+
+function drawState(snap) {
+  ctx.fillStyle = '#050a0e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid lines
+  ctx.strokeStyle = '#0a1a28';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= BOARD_SIZE; i++) {
+    ctx.beginPath(); ctx.moveTo(i*CELL, 0); ctx.lineTo(i*CELL, canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(canvas.width, i*CELL); ctx.stroke();
+  }
+
+  const { body, hx, hy, tx, ty, ax, ay } = snap;
+
+  // Find tail position by walking from tail to head
+  // body[id] == -1 means empty, else it stores direction toward next segment
+  // We need to color based on position along the snake
+
+  // Build a set of body cell positions for quick lookup
+  // and mark the tail cell
+  const tailId = ID(tx, ty);
+
+  // Draw all occupied cells
+  for (let i = 0; i < BOARD_SIZE; i++) {
+    for (let j = 0; j < BOARD_SIZE; j++) {
+      const id = ID(i, j);
+      const cx = j * CELL + PAD;
+      const cy = i * CELL + PAD;
+      const cw = CELL - 2*PAD;
+
+      if (i === hx && j === hy) {
+        // Head
+        ctx.shadowColor = '#00ffe7';
+        ctx.shadowBlur  = 12;
+        ctx.fillStyle = '#00ffe7';
+        ctx.fillRect(cx, cy, cw, cw);
+        ctx.shadowBlur = 0;
+
+        // Eyes — offset based on... we skip fancy direction eye for simplicity
+        ctx.fillStyle = '#050a0e';
+        ctx.fillRect(cx + 3, cy + 3, 3, 3);
+        ctx.fillRect(cx + cw - 6, cy + 3, 3, 3);
+
+      } else if (body[id] !== EMPTY_VAL) {
+        // Body segment — tail is dimmer
+        const isTail = (id === tailId);
+        if (isTail) {
+          ctx.fillStyle = '#005548';
+        } else {
+          ctx.fillStyle = '#00866e';
+        }
+        ctx.fillRect(cx, cy, cw, cw);
+
+        // Draw connector line toward next segment
+        const d = body[id];
+        const dx = DIR[d][0], dy = DIR[d][1];
+        // Fill the gap between this cell and the next
+        ctx.fillStyle = isTail ? '#005548' : '#00866e';
+        if (dy === 1)  ctx.fillRect(cx + cw, cy, PAD*2 + 1, cw); // right gap
+        if (dy === -1) ctx.fillRect(cx - PAD*2, cy, PAD*2 + 1, cw); // left gap
+        if (dx === 1)  ctx.fillRect(cx, cy + cw, cw, PAD*2 + 1); // down gap
+        if (dx === -1) ctx.fillRect(cx, cy - PAD*2, cw, PAD*2 + 1); // up gap
+
+      } else if (i === ax && j === ay) {
+        // Apple
+        ctx.shadowColor = '#ff3860';
+        ctx.shadowBlur  = 16;
+        ctx.fillStyle = '#ff3860';
+        // Draw a slightly rounded rect
+        const inset = 2;
+        ctx.beginPath();
+        ctx.roundRect(cx + inset, cy + inset, cw - inset*2, cw - inset*2, 3);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// Playback engine
+// ─────────────────────────────────────────────
+let stateHistory = [];
+let cursor = 0;
+let playing = false;
+let rafId = null;
+let lastFrameTime = 0;
+
+function setStatus(msg, active=false) {
+  const el = document.getElementById('status-line');
+  el.textContent = msg;
+  el.className = active ? 'active' : '';
+}
+
+function updateUI() {
+  if (!stateHistory.length) return;
+  const { snap, appleCount } = stateHistory[cursor];
+  drawState(snap);
+
+  document.getElementById('stat-size').textContent   = getSize(snap);
+  document.getElementById('stat-step').textContent   = snap.timer;
+  document.getElementById('stat-apples').textContent = appleCount;
+
+  const pct = stateHistory.length > 1 ? (cursor / (stateHistory.length - 1)) * 100 : 0;
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-text').textContent = `${cursor} / ${stateHistory.length - 1} moves`;
+
+  document.getElementById('btn-step-back').disabled = cursor === 0;
+  document.getElementById('btn-step-fwd').disabled  = cursor === stateHistory.length - 1;
+  document.getElementById('btn-play').textContent   = playing ? '⏸ PAUSE' : '▶ PLAY';
+}
+
+function stepForward() {
+  if (cursor < stateHistory.length - 1) {
+    cursor++;
+    updateUI();
+    return true;
+  }
+  return false;
+}
+
+function stepBackward() {
+  if (cursor > 0) {
+    cursor--;
+    updateUI();
+  }
+}
+
+function getFps() {
+  return parseInt(document.getElementById('speed-slider').value);
+}
+
+function animLoop(ts) {
+  if (!playing) return;
+  const interval = 1000 / getFps();
+  if (ts - lastFrameTime >= interval) {
+    lastFrameTime = ts;
+    const more = stepForward();
+    if (!more) {
+      playing = false;
+      setStatus('Playback complete.', false);
+      updateUI();
+      return;
+    }
+  }
+  rafId = requestAnimationFrame(animLoop);
+}
+
+function togglePlay() {
+  if (!stateHistory.length) return;
+  playing = !playing;
+  if (playing) {
+    setStatus('Playing...', true);
+    lastFrameTime = 0;
+    rafId = requestAnimationFrame(animLoop);
+  } else {
+    cancelAnimationFrame(rafId);
+    setStatus('Paused.', false);
+  }
+  updateUI();
+}
+
+function resetPlayback() {
+  playing = false;
+  cancelAnimationFrame(rafId);
+  cursor = 0;
+  setStatus('Reset.', false);
+  updateUI();
+}
+
+document.getElementById('btn-play').addEventListener('click', togglePlay);
+document.getElementById('btn-step-fwd').addEventListener('click', () => { playing = false; cancelAnimationFrame(rafId); stepForward(); });
+document.getElementById('btn-step-back').addEventListener('click', () => { playing = false; cancelAnimationFrame(rafId); stepBackward(); });
+document.getElementById('btn-reset').addEventListener('click', resetPlayback);
+
+// ─────────────────────────────────────────────
+// File loading
+// ─────────────────────────────────────────────
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    const events = parseGameOut(text);
+
+    if (!events.length) {
+      setStatus('No M/A events found in file.', false);
+      return;
+    }
+
+    // The first A event before any M events sets the initial apple
+    // Build history
+    stateHistory = buildStateHistory(events);
+    cursor = 0;
+    playing = false;
+    cancelAnimationFrame(rafId);
+
+    document.getElementById('main').style.display = 'flex';
+    document.getElementById('drop-zone').style.display = 'none';
+
+    setStatus(`Loaded ${events.filter(e=>e.type==='M').length} moves, ${events.filter(e=>e.type==='A').length} apples.`, true);
+    updateUI();
+  };
+  reader.readAsText(file);
+}
+
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+document.getElementById('browse-link').addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowRight') { playing = false; cancelAnimationFrame(rafId); stepForward(); }
+  if (e.code === 'ArrowLeft')  { playing = false; cancelAnimationFrame(rafId); stepBackward(); }
+});
+</script>
+</body>
+</html>

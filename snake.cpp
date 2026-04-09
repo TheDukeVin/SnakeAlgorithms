@@ -44,18 +44,20 @@ using namespace std;
 const int boardSize = 30;
 
 const double diffusiveTime = 50; // approximate for how long it takes to reach each apple.
-const double hamBonus = 100; // how strongly endgame algorithm follows ham cycle
+const double hamBonus = 1000; // how strongly endgame algorithm follows ham cycle
 const int endGameCutoff = 800;
 const double decayRate = 1;
 const double borderBonus = 10;
 
 const int maxSafety = 6;
 const int ignoreAppleSafetyThreshold = 3;
-const int endGameSafety = 2;
+// const int endGameSafety = 2;
+
+// endGameSafety=2 is not large enough.
 
 const int forceCycleCutoff = 850;
 
-
+const int maxCycleMoves = 1000;
 
 
 
@@ -415,15 +417,15 @@ public:
 
     
     vector<Edge> edgeQueue;
-    vector<unordered_set<int>> BCCs;
+    vector<vector<int>> BCCs;
 
     unordered_map<Component, unordered_set<Component, ComponentHash>, ComponentHash> compGraph;
     vector<int> cellComps;
 
-    vector<unordered_set<int>> connectedComps;
+    vector<vector<int>> connectedComps;
 
-    void dfs(int node, unordered_set<int>& lst){
-        lst.insert(node);
+    void dfs(int node, vector<int>& lst){
+        lst.push_back(node);
         for(Pos neigh : env.emptyNeighs(fromID(node))){
             if(visitTime[ID(neigh)] == -1){
                 visitTime[ID(neigh)] = INF;
@@ -436,7 +438,7 @@ public:
         int counter = BCCs.size();
         for(int i=0; i<area; i++){
             if(visitTime[i] == -1){
-                unordered_set<int> comp;
+                vector<int> comp;
                 visitTime[i] = INF;
                 dfs(i, comp);
                 connectedComps.push_back(comp);
@@ -455,7 +457,7 @@ public:
             bcc.insert(edgeQueue[edgeQueue.size()-1].b);
             edgeQueue.pop_back();
         }
-        BCCs.push_back(bcc);
+        BCCs.push_back(vector<int>(bcc.begin(), bcc.end()));
     }
 
     void tarjan(int node, int parent=-1){
@@ -490,7 +492,7 @@ public:
             isAP[node] = true;
         }
         if(parent == -1 && n_children == 0){
-            BCCs.push_back(unordered_set<int>{node});
+            BCCs.push_back(vector<int>{node});
         }
     }
 
@@ -568,7 +570,7 @@ public:
         // }
 
         vector<int> cumMaxTimes(area, -1);
-        parityCounts = unordered_map<Component, pair<int, int>, ComponentHash>();
+        parityCounts = unordered_map<Component, vector<int>, ComponentHash>();
 
         for(const Pos& p : env.emptyNeighs(env.head)){
             visitedComps = unordered_set<Component, ComponentHash>();
@@ -578,10 +580,11 @@ public:
             maxTimes.assign(area, -1);
             maxTimes[ID(p)] = 1;
 
-            // cout << "Hi\n";
-            // cout << PosToString(p) << '\n';
+            // cout << "Getting max times starting at " << PosToString(p) << '\n';
             // cout << compToString(compOfCell(ID(p), blocked_decomp)) << '\n';
             getMaxTimes(initComp, ID(p), blocked_decomp);
+
+            // displayArray(env, maxTimes);
             
             for(int i=0; i<area; i++){
                 cumMaxTimes[i] = max(cumMaxTimes[i], maxTimes[i]);
@@ -592,6 +595,8 @@ public:
         parent = unordered_map<Component, Component, ComponentHash>();
         Component initComp = compOfCell(ID(env.head), full_decomp);
         visitedComps.insert(initComp);
+
+        // cout << "Calling again\n";
         maxTimes.assign(area, -1);
 
         // cout << "Yio\n";
@@ -616,26 +621,29 @@ private:
     unordered_set<Component, ComponentHash> visitedComps;
     unordered_map<Component, Component, ComponentHash> parent;
 
-    unordered_map<Component, pair<int, int>, ComponentHash> parityCounts;
+    unordered_map<Component, vector<int>, ComponentHash> parityCounts;
 
     void getMaxTimes(Component comp, int start, const TarjanDecomposition& decomp){
+        // cout << "Calling on " << compToString(comp) << '\n';
         if(comp.type == BCC_TYPE){
             if(!parityCounts.contains(comp)){
                 int counts[2] = {0, 0};
                 for(const int& x : decomp.BCCs[comp.id]){
-                    counts[manhattanDist(fromID(x), fromID(start)) % 2] ++;
+                    counts[manhattanDist(fromID(x), Pos{0, 0}) % 2] ++;
                 }
-                parityCounts[comp] = make_pair(counts[0], counts[1]);
+                parityCounts[comp] = vector<int>{counts[0], counts[1]};
             }
+            // cout << parityCounts[comp][0] << ' ' << parityCounts[comp][1] << '\n';
             for(const int& x : decomp.BCCs[comp.id]){
                 if(x == start) continue;
                 int parity = manhattanDist(fromID(x), fromID(start)) % 2;
+                int start_parity = manhattanDist(fromID(start), Pos{0, 0}) % 2;
                 int m;
                 if(parity == 0){
-                    m = 2 * min(parityCounts[comp].second, parityCounts[comp].first-1);
+                    m = 2 * min(parityCounts[comp][(start_parity+1)%2], parityCounts[comp][start_parity]-1);
                 }
                 else{
-                    m = 2 * min(parityCounts[comp].second, parityCounts[comp].first) - 1;
+                    m = 2 * min(parityCounts[comp][(start_parity+1)%2], parityCounts[comp][start_parity]) - 1;
                 }
                 maxTimes[x] = maxTimes[start] + m;
             }
@@ -955,7 +963,7 @@ Cycle Cycle::fill(){
     unordered_set<Cycle, CycleHash> visited;
     visited.insert(*this);
 
-    for(int i=0; i<area*area; i++){
+    for(int i=0; i<maxCycleMoves; i++){
         if(q.size() == 0) break;
         distedCycle top = q.top();
         Cycle cyc = top.cycle;
@@ -1004,7 +1012,7 @@ Cycle Cycle::fill(){
 
     cout << "FATAL: cycle not found\n";
 
-    assert(false);
+    // assert(false);
 
     return *this;
 }
@@ -1146,7 +1154,21 @@ public:
 
 
     bool getMinTimes(const Snake& env, const Features& features, int safety, bool print=false){
+        
+        // Get visibility of tail and apple
 
+        bool tail_vis = false;
+        bool apple_vis = false;
+        for(const auto& bcc : features.full_decomp.BCCs){
+            for(const int& x : bcc){
+                if(x == ID(env.apple)) apple_vis = true;
+                for(const Pos& p : validNeighs(fromID(x))){
+                    if(p == env.tail && x != ID(env.head)) tail_vis = true;
+                }
+            }
+        }
+
+        if(tail_vis) safety = 0;
 
         vector<bool> retractibleBody(area, false);
         for(int i=0; i<area; i++){
@@ -1365,9 +1387,14 @@ public:
         vector<Snake> envs_to_check;
 
         for(const int& block : blocks){
-            Snake blocked_env = env;
-            blocked_env.body[block] = 4;
-            envs_to_check.push_back(blocked_env);
+            for(const Pos& p : env.emptyNeighs(fromID(block))){
+                if(!visited[ID(p)]){
+                    // cout << "Blocking " << PosToString(p) << '\n';
+                    Snake blocked_env = env;
+                    blocked_env.body[ID(p)] = 4;
+                    envs_to_check.push_back(blocked_env);
+                }
+            }
         }
 
         if(blocks.size() == 0){
@@ -1606,15 +1633,22 @@ public:
             c.direc[ID(currPos)] = path[i];
             currPos = shiftPos(currPos, path[i]);
             if(env.body[ID(currPos)] != -1){
+                // cout << "Ran into " << env.body[ID(currPos)] << '\n';
                 break;
             }
         }
 
+        // cout << "yo\n";
+
         for(int i=0; i<area; i++){
+            // cout << PosToString(currPos) << ' ';
             c.direc[ID(currPos)] = env.body[ID(currPos)];
             currPos = shiftPos(currPos, env.body[ID(currPos)]);
             if(currPos == env.head) break;
         }
+
+        // cout << "bruh\n";
+        // c.display();
 
         // cout << '\n';
         c.fixCycle();
@@ -1651,7 +1685,7 @@ public:
     int LOOPED = 2;
     int USR_TERM = 3;
 
-    int simulate(Snake env, int printMode=0, int fastForward=INF, string logFile=""){ // return end cause
+    int simulate(Snake env, int printMode=0, int fastForward=INF, string logFile="", string gameFile=""){ // return end cause
         string s;
 
         int num_repeats = 0;
@@ -1661,6 +1695,10 @@ public:
         {
             ofstream fout(logFile);
             fout.close();
+        }
+        if(gameFile != ""){
+            ofstream fout(gameFile);
+            fout << env.toCode() << '\n';
         }
         
 
@@ -1676,10 +1714,10 @@ public:
         for(int i=0; i<area*2; i++){
             // cout << env.toCode() << '\n';
 
-            if(env.getSize() >= endGameCutoff){
-                maxSafety_ = endGameSafety;
-                ignoreAppleSafetyThreshold_ = 0;
-            }
+            // if(env.getSize() >= endGameCutoff){
+            //     maxSafety_ = endGameSafety;
+            //     ignoreAppleSafetyThreshold_ = 0;
+            // }
 
             if(env.getSize() >= forceCycleCutoff && !forcedCycle){
                 if(printMode >= 1){
@@ -1693,8 +1731,8 @@ public:
             vector<vector<int>> paths;
             if(env.getSize() < endGameCutoff){
                 vector<int> free_path = shortestPath(env, FreePolicy(0), currCycle, printMode>=2);
-                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), currCycle, printMode>=2, free_path.size() * 1.5);
-                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), currCycle, printMode>=2, free_path.size() * 1.5);
+                vector<int> right_border_path = shortestPath(env, BorderPolicy(RIGHT_TURN), currCycle, printMode>=2, free_path.size());
+                vector<int> left_border_path = shortestPath(env, BorderPolicy(LEFT_TURN), currCycle, printMode>=2, free_path.size());
                 paths = vector<vector<int>>{free_path, right_border_path, left_border_path};
             }
             else{
@@ -1800,6 +1838,10 @@ public:
             for(int d : path){
                 newEnv.move(d);
                 headLoc.push_back(ID(newEnv.head));
+                if(gameFile != ""){
+                    ofstream fout(gameFile, ios::app);
+                    fout << "M " << d << '\n';
+                }
             }
 
             if(printMode >= 2){
@@ -1826,6 +1868,10 @@ public:
                 appleTimes.push_back(env.timer);
                 if(env.getSize() == area) return COMPLETE;
                 env.randomizeApple();
+                if(gameFile != ""){
+                    ofstream fout(gameFile, ios::app);
+                    fout << "A " << env.apple.x << ' ' << env.apple.y << '\n';
+                }
             }
             else{
                 num_repeats++;
@@ -1867,7 +1913,9 @@ public:
         log(mainFile, "Running " + to_string(numTrials) + " trials...\n");
 
         for(int i=0; i<numTrials; i++){
-            int endCause = simulate(Snake(), 0, INF, logGames ? "state_logs/game_" + to_string(i) + ".txt" : "");
+            int endCause = simulate(Snake(), 0, INF,
+                                logGames ? "state_logs/game_" + to_string(i) + ".txt" : "",
+                                logGames ? "game_logs/game_" + to_string(i) + ".txt" : "");
 
             for(const int& t : appleTimes){
                 fout << t << ' ';
@@ -1915,7 +1963,7 @@ void runSavedEndGames(int numGames, int cutoff){
 }
 
 int main(){
-    srand(95436);
+    srand(142154);
 
     Solver s;
 
@@ -1936,10 +1984,11 @@ int main(){
 
 
 
-    // Snake env("26x21_13x27_11x27_22607_nsssssspaaaaaaalgghggguaaaaaaaonscuaaaaaaaaaaoljcuaaaaaaaaaaoonsuaaaaaaaaaaoolguaaaaaaaaaaooospaaaaaaaaaaooghuaaaaacssspoosrxpaaaanaaauokhvhwsssspaaauolvucwaaaaaaaauoossswaaaaaaaauolgggwaaaaaaaauoonsssaaaaaaabuookaaaaaaaaaaaaookaaaaaaaaaaaaoogggggghggggghoossssssrwssssrogggggghwwaaaawonssrsnrwwcrrpwokaaxehwwwcxxuwjkaabonwwwbhguwnhaaeopxwwcsxpwosagjgggwwbkauwkaawssssswcpauwkaavgggggwbkauwkaaxssssssapbuwkaaaaaaaaaaaeawkaaaaaaaaaaaebwggggggggggggjes");
+    // Snake env("6x18_13x7_28x14_16040_nssaaaaaaaaaaaalgonaaaaaaaaaaaonooaaaaaaaacpaoooosssssssssxaooogggggghblgoaoooaaaaaabooaoaoooaaaabhdooaoaoooabggjboooaoaoooaepansoooaoaoooaguagooooaoaoooaxsssoojoaoaoooaaaaeoostaoaooosssseoggjaoaookbggoeoaaaaoaookcspoeoaaaajaooknhuoeoaaaaaaooklvuoeoaaaaaaookossteoaaaaaaotkgggjeoaaaaaagokaaaaeoaaaaaaaogggggjoaaaaaaaosssssstaaaaaaagggggggjaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    // env.move(0);
     // env.move(1);
 
-    Snake env("13x1_8x22_16x18_41920_nsrssrsssnnsnnsghvghwhgotqjoqonswrsvvuhgjnqookaxvhwssrwsljookaaxsxghxwjontjkaaaaaxrgwxohjnknssspawwqoonwtklgghwpwwxtthwjkonrswuvvghjnwxkohwhxuxssscqvokonwvguaaaabonokohwxsssssssttokonvgggghhghgjokoqwrrrrqvwrwsoogosxxxxuacwwjoosggggghuacxwxolosssssnuabhwjoogglggoluaanxxoossjcsojaaaggooggorsjoaaaanstonshwhxopaaahgjolorwvjhuaanqwsoohwwwsruanqwqooonwwxhwualorxtoolwvhwwuaolvgoooocwrwwuaojnnoooonxwvwxntstttoojggwwsjlggggjoossssxhxtssssstggggggvgggggggj");
+    // Snake env("19x26_17x18_11x19_37921_nsssssssssssssslkghbggglggghheogwqonsstnscrvoonsxjgggjljnwxoolhjnsssstnqwjootrxqggggjlorxolhvgjnsssnogwjoorwssqglootnrxolwwggjaojlohwjoonwuaaaontonxxoohwuaaaoljoggjoonwucsstoaossstolwucggooaggggoojcucxsjoaaaaaoorrubgostaabgkolwwuaaggjaajnkoorwuaaaaaaaxtkolwwuaaaaahghjkoorwxsansacwqwpolwvgorqopcwwraoorxslwjgucwxwwtlvgoonxsssvlwvoossoogggghxtnxtllooonnnsngjggoojooottqokwsrsoontogggoohwhwjooloonsstoqwvwxoojjolggjgwrxrjoosstosssssxhwxtgggjgggggggvvgj");
     // env.move(0);
 
 
@@ -1948,7 +1997,8 @@ int main(){
     // env.move(0);
     // env.move(0);
 
-    cout << s.simulate(env, 1, 0) << "\n";
+    // cout << s.simulate(env, 0, 1000, "", "game.out") << "\n";
+    // cout << s.simulate(env, 1, 0) << "\n";
 
     // s.endgamePolicy(env, true);
 
@@ -1957,7 +2007,7 @@ int main(){
 
     // s.maxSafety_ = maxSafety;
     // s.ignoreAppleSafetyThreshold_ = ignoreAppleSafetyThreshold;
-    // s.shortestPath(env, FreePolicy(0), s.hamCycle, true);
+    // s.shortestPath(env, FreePolicy(0), s.hamCycle, true, 100);
     // s.computeBorder(env);
 
     // s.displayArray(env, env.body, true);
@@ -1970,7 +2020,7 @@ int main(){
     // s.getMinTimes(env, Features(env), 0, true);
     // cout << "Min times:\n";
     // displayArray(env, s.minTimes);
-    // vector<double> heuristic = s.distanceHeuristic(env, Features(env), 0);
+    // vector<double> heuristic = s.distanceHeuristic(env, Features(env), 2);
     // cout << heuristic[0] << ' ' << heuristic[1] << '\n';
 
     // s.displayArray(env, s.maxTimes);
