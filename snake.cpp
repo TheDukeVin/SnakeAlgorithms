@@ -49,13 +49,13 @@ const int endGameCutoff = 800;
 const double decayRate = 1;
 const double borderBonus = 10;
 
-const int maxSafety = 6;
-const int ignoreAppleSafetyThreshold = 3;
+const int maxSafety = 12;
+const int ignoreAppleSafetyThreshold = 6;
 // const int endGameSafety = 2;
 
 // endGameSafety=2 is not large enough.
 
-const int forceCycleCutoff = 850;
+const int forceCycleCutoff = 800;
 
 const int maxCycleMoves = 1000;
 
@@ -946,10 +946,35 @@ struct distedCycle{
             if(cycle.direc[i] == -1) emptyCells.push_back(fromID(i));
         }
         dist = 0;
-        for(const Pos& p : emptyCells){
-            for(const Pos& q : emptyCells){
-                dist = max(dist, manhattanDist(p, q));
+        // for(const Pos& p : emptyCells){
+        //     for(const Pos& q : emptyCells){
+        //         dist = max(dist, manhattanDist(p, q));
+        //     }
+        // }
+        while(emptyCells.size() > 0){
+            int maxDist = 0;
+            int isolatedPoint = -1;
+            for(int i=0; i<emptyCells.size(); i++){
+                for(int j=0; j<emptyCells.size(); j++){
+                    if(maxDist < manhattanDist(emptyCells[i], emptyCells[j])){
+                        maxDist = manhattanDist(emptyCells[i], emptyCells[j]);
+                        isolatedPoint = i;
+                    }
+                }
             }
+            int minDist = INF;
+            int closestPoint = -1;
+            for(int i=0; i<emptyCells.size(); i++){
+                if(i == isolatedPoint) continue;
+                int candDist = manhattanDist(emptyCells[isolatedPoint], emptyCells[i]);
+                if(minDist > candDist){
+                    minDist = candDist;
+                    closestPoint = i;
+                }
+            }
+            dist += minDist;
+            emptyCells.erase(emptyCells.begin() + closestPoint);
+            emptyCells.erase(emptyCells.begin() + isolatedPoint);
         }
     }
 };
@@ -1010,11 +1035,11 @@ Cycle Cycle::fill(){
         }
     }
 
-    cout << "FATAL: cycle not found\n";
+    cout << "cycle not found\n";
 
     // assert(false);
 
-    return *this;
+    return Cycle();
 }
 
 
@@ -1723,8 +1748,11 @@ public:
                 if(printMode >= 1){
                     cout << "Forcing Ham cycle\n";
                 }
-                currCycle = getCycle(env, printMode >= 1);
-                forcedCycle = true;
+                vector<int> c = getCycle(env, printMode >= 1);
+                if(c[0] != -1){
+                    currCycle = c;
+                    forcedCycle = true;
+                }
             }
             
 
@@ -1791,6 +1819,7 @@ public:
                 if(printMode >= 1){
                     cout << "Got stuck, using Ham cycle instead.\n";
                 }
+                // currCycle = getCycle(env, printMode >= 1);
                 path = shortestPath(env, FreePolicy(1), currCycle, printMode>=2, 2*area);
 
                 newEnv = env;
@@ -1800,6 +1829,10 @@ public:
             }
 
             // If still not, switch to a different ham cycle
+
+            // if(newEnv.head != newEnv.apple){
+            //     assert(false);
+            // }
 
             if(newEnv.head != newEnv.apple){
                 if(printMode >= 1){
@@ -1815,14 +1848,17 @@ public:
                 }
             }
 
-            // If still not, use cycle finding
+            // // If still not, use cycle finding
 
             if(newEnv.head != newEnv.apple){
                 if(printMode >= 1){
                     cout << "Got stuck, calling cycle finding.\n";
                 }
-                currCycle = getCycle(env, printMode >= 1);
-                forcedCycle = true;
+                vector<int> c = getCycle(env, printMode >= 1);
+                if(c[0] != -1){
+                    currCycle = c;
+                    forcedCycle = true;
+                }
                 path = shortestPath(env, FreePolicy(1), currCycle, printMode>=2, 2*area);
 
                 newEnv = env;
@@ -1963,7 +1999,7 @@ void runSavedEndGames(int numGames, int cutoff){
 }
 
 int main(){
-    srand(142154);
+    srand(412586);
 
     Solver s;
 
@@ -1984,11 +2020,11 @@ int main(){
 
 
 
-    // Snake env("6x18_13x7_28x14_16040_nssaaaaaaaaaaaalgonaaaaaaaaaaaonooaaaaaaaacpaoooosssssssssxaooogggggghblgoaoooaaaaaabooaoaoooaaaabhdooaoaoooabggjboooaoaoooaepansoooaoaoooaguagooooaoaoooaxsssoojoaoaoooaaaaeoostaoaooosssseoggjaoaookbggoeoaaaaoaookcspoeoaaaajaooknhuoeoaaaaaaooklvuoeoaaaaaaookossteoaaaaaaotkgggjeoaaaaaagokaaaaeoaaaaaaaogggggjoaaaaaaaosssssstaaaaaaagggggggjaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    // Snake env("8x13_24x13_12x15_15531_ggggggggggggghhwsrrrssssssssrwwhxxwggggggkbwwwvghwuaaaaakerwwuacxuaaaaakawwwuabguaaaaakawwwuaaaaaaaaakawwwuaaaacpaaakawwwuaaaaauaaakawwwuaaaabuanakawwwuaaaaeaaoakawwwuaaaaeaaoakawwwuaaaaeaaoakawwwuaaaaeaaoakawwwuaaagjaaoakawwwuaabwssstakawwwuaaesaaaeakawwwuaaaaaaaeakawwwuaaaaaaaeakawwwxbggggggjakawwvoesssssssspawwxopaaaaaaaaaawwjguaaaaaaaaabwwwssssssssaaaenwxaaaaabgjaaaegwaaaaaaaaaaaaessaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     // env.move(0);
     // env.move(1);
 
-    // Snake env("19x26_17x18_11x19_37921_nsssssssssssssslkghbggglggghheogwqonsstnscrvoonsxjgggjljnwxoolhjnsssstnqwjootrxqggggjlorxolhvgjnsssnogwjoorwssqglootnrxolwwggjaojlohwjoonwuaaaontonxxoohwuaaaoljoggjoonwucsstoaossstolwucggooaggggoojcucxsjoaaaaaoorrubgostaabgkolwwuaaggjaajnkoorwuaaaaaaaxtkolwwuaaaaahghjkoorwxsansacwqwpolwvgorqopcwwraoorxslwjgucwxwwtlvgoonxsssvlwvoossoogggghxtnxtllooonnnsngjggoojooottqokwsrsoontogggoohwhwjooloonsstoqwvwxoojjolggjgwrxrjoosstosssssxhwxtgggjgggggggvvgj");
+    // Snake env("28x2_28x8_2x0_51824_gggggggggggggkaxnnnnnnnnnnnnqketttttttttoolokggggggggloooookxnnnnnnnooooookeoooooooooooookjoooooooooooookxoooooooooooookjoooooooooooookxoooooooojooookjoooooooonoooohxooooooooooooonjooooooooooooohxooooooooooooonjooooooooooooohxooooootoooooonjooooolotttoojhxoooooolllooonnjooooooooooooohxoooootooooooonjooooloooootoohxooottoooolooonjookbooooooooohxookeoojoooooonjookeoonoooooohxookeooojooooonjookeooonjjjjohxotpeoooonnnnonjaaajjjooooooohxssssssttttttts");
     // env.move(0);
 
 
@@ -1997,7 +2033,7 @@ int main(){
     // env.move(0);
     // env.move(0);
 
-    // cout << s.simulate(env, 0, 1000, "", "game.out") << "\n";
+    // cout << s.simulate(env, 1, 1000, "", "game.out") << "\n";
     // cout << s.simulate(env, 1, 0) << "\n";
 
     // s.endgamePolicy(env, true);
@@ -2020,12 +2056,12 @@ int main(){
     // s.getMinTimes(env, Features(env), 0, true);
     // cout << "Min times:\n";
     // displayArray(env, s.minTimes);
-    // vector<double> heuristic = s.distanceHeuristic(env, Features(env), 2);
+    // vector<double> heuristic = s.distanceHeuristic(env, Features(env), 1);
     // cout << heuristic[0] << ' ' << heuristic[1] << '\n';
 
     // s.displayArray(env, s.maxTimes);
 
-    // s.runTrials(100, "score.out", "code.out", "log.out", true);
+    s.runTrials(100, "score.out", "code.out", "log.out", true);
 
     // runSavedEndGames(50, 700);
 }
